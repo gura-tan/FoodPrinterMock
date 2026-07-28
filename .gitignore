@@ -1,0 +1,12 @@
+# ビルド成果物（再生成可能）
+build/
+
+# コンポーネントマネージャが自動取得するもの（再生成可能）
+managed_components/
+
+# sdkconfigのバックアップ（set-target等で自動生成される）
+sdkconfig.old
+
+# IDEやOS由来のゴミ
+.vscode/
+.DS_Store
