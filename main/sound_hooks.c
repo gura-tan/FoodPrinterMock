@@ -10,16 +10,18 @@
 static const char *TAG = "sound_hooks";
 
 /*
- * main/sounds/button.wav を EMBED_FILES でファームウェアに埋め込む
- * (main/CMakeLists.txt の EMBED_FILES 参照)。
+ * main/sounds/button.wav, main/sounds/move.wav を EMBED_FILES でファームウェアに
+ * 埋め込む(main/CMakeLists.txt の EMBED_FILES 参照)。
  * シンボル名はファイルパスの '/' '.' を '_' に置き換えたもの
- * (_binary_sounds_button_wav_start / _end) になる。
+ * (_binary_button_wav_start/_end, _binary_move_wav_start/_end) になる。
  * もし「undefined reference」でリンクエラーになる場合は、
- * `find build -name "*.o" | xargs nm 2>/dev/null | grep button_wav`
+ * `find build -name "*.o" | xargs nm 2>/dev/null | grep _wav`
  * で実際のシンボル名を確認してほしい。
  */
 extern const uint8_t button_wav_start[] asm("_binary_button_wav_start");
 extern const uint8_t button_wav_end[]   asm("_binary_button_wav_end");
+extern const uint8_t move_wav_start[] asm("_binary_move_wav_start");
+extern const uint8_t move_wav_end[]   asm("_binary_move_wav_end");
 
 #define SOUND_QUEUE_LEN      4
 #define SOUND_TASK_STACK     4096
@@ -36,6 +38,8 @@ typedef struct {
 
 static sound_clip_t s_button_clip;
 static bool         s_button_clip_valid;
+static sound_clip_t s_move_clip;
+static bool         s_move_clip_valid;
 
 static esp_codec_dev_handle_t s_spk_dev;
 static QueueHandle_t s_sound_queue;
@@ -97,9 +101,37 @@ static bool parse_wav(const uint8_t *buf, size_t len, sound_clip_t *out)
         return false;
     }
 
-    ESP_LOGI(TAG, "button.wav parsed: %luHz, %ubit, %uch, %u bytes PCM",
+    ESP_LOGI(TAG, "wav parsed: %luHz, %ubit, %uch, %u bytes PCM",
              (unsigned long)out->sample_rate, out->bits_per_sample, out->channels, (unsigned)out->pcm_len);
     return true;
+}
+
+/* オープン→書き込み→クローズをまとめた再生処理。
+ * (要改善点: トリガーの都度open/closeしているため、まだ最終形の低遅延構成
+ *  ではない。MOVE音はBUTTON音より高頻度に発火するため、この待ち時間が
+ *  積み重なって遅延・音切れの原因になりやすい点は認識した上で使うこと) */
+static void play_clip(const sound_clip_t *clip)
+{
+    esp_codec_dev_sample_info_t fs = {
+        .sample_rate     = clip->sample_rate,
+        .channel         = clip->channels,
+        .bits_per_sample = clip->bits_per_sample,
+    };
+
+    int ret = esp_codec_dev_open(s_spk_dev, &fs);
+    if (ret != ESP_CODEC_DEV_OK) {
+        ESP_LOGE(TAG, "esp_codec_dev_open failed: %d", ret);
+        return;
+    }
+
+    /* pcm_dataはconstだが、esp_codec_dev_write()の引数はvoid*なので
+     * キャストしている(内部で書き換えられることはない) */
+    ret = esp_codec_dev_write(s_spk_dev, (void *)clip->pcm_data, clip->pcm_len);
+    if (ret != ESP_CODEC_DEV_OK) {
+        ESP_LOGE(TAG, "esp_codec_dev_write failed: %d", ret);
+    }
+
+    esp_codec_dev_close(s_spk_dev);
 }
 
 static void sound_task(void *arg)
@@ -113,35 +145,28 @@ static void sound_task(void *arg)
         }
 
         const sound_clip_t *clip = NULL;
-        if (id == UI_SOUND_BUTTON && s_button_clip_valid) {
-            clip = &s_button_clip;
+        switch (id) {
+        case UI_SOUND_BUTTON:
+            if (s_button_clip_valid) {
+                clip = &s_button_clip;
+            }
+            break;
+        case UI_SOUND_MOVE:
+            if (s_move_clip_valid) {
+                clip = &s_move_clip;
+            }
+            break;
+        default:
+            break;
         }
+
         if (clip == NULL || s_spk_dev == NULL) {
-            /* MOVE/CONFIRM/BACK/DONEはまだ音源が無いのでログのみ(従来通り) */
+            /* CONFIRM/BACK/DONEはまだ音源が無いのでログのみ(従来通り) */
             ESP_LOGD(TAG, "sound id=%d: no clip yet (stub)", id);
             continue;
         }
 
-        esp_codec_dev_sample_info_t fs = {
-            .sample_rate     = clip->sample_rate,
-            .channel         = clip->channels,
-            .bits_per_sample = clip->bits_per_sample,
-        };
-
-        int ret = esp_codec_dev_open(s_spk_dev, &fs);
-        if (ret != ESP_CODEC_DEV_OK) {
-            ESP_LOGE(TAG, "esp_codec_dev_open failed: %d", ret);
-            continue;
-        }
-
-        /* pcm_dataはconstだが、esp_codec_dev_write()の引数はvoid*なので
-         * キャストしている(内部で書き換えられることはない) */
-        ret = esp_codec_dev_write(s_spk_dev, (void *)clip->pcm_data, clip->pcm_len);
-        if (ret != ESP_CODEC_DEV_OK) {
-            ESP_LOGE(TAG, "esp_codec_dev_write failed: %d", ret);
-        }
-
-        esp_codec_dev_close(s_spk_dev);
+        play_clip(clip);
     }
 }
 
@@ -154,10 +179,16 @@ void sound_hooks_init(void)
         esp_codec_dev_set_out_vol(s_spk_dev, SOUND_OUT_VOLUME_PCT);
     }
 
-    size_t wav_len = (size_t)(button_wav_end - button_wav_start);
-    s_button_clip_valid = parse_wav(button_wav_start, wav_len, &s_button_clip);
+    size_t button_wav_len = (size_t)(button_wav_end - button_wav_start);
+    s_button_clip_valid = parse_wav(button_wav_start, button_wav_len, &s_button_clip);
     if (!s_button_clip_valid) {
         ESP_LOGW(TAG, "button.wav の解析に失敗しました。main/sounds/button.wav を確認してください");
+    }
+
+    size_t move_wav_len = (size_t)(move_wav_end - move_wav_start);
+    s_move_clip_valid = parse_wav(move_wav_start, move_wav_len, &s_move_clip);
+    if (!s_move_clip_valid) {
+        ESP_LOGW(TAG, "move.wav の解析に失敗しました。main/sounds/move.wav を確認してください");
     }
 
     s_sound_queue = xQueueCreate(SOUND_QUEUE_LEN, sizeof(ui_sound_id_t));
@@ -168,8 +199,8 @@ void sound_hooks_init(void)
     xTaskCreatePinnedToCore(sound_task, "sound_task", SOUND_TASK_STACK, NULL,
                              SOUND_TASK_PRIORITY, NULL, 0);
 
-    ESP_LOGI(TAG, "sound_hooks_init done (spk_dev=%p, button_clip_valid=%d)",
-             (void *)s_spk_dev, s_button_clip_valid);
+    ESP_LOGI(TAG, "sound_hooks_init done (spk_dev=%p, button_clip_valid=%d, move_clip_valid=%d)",
+             (void *)s_spk_dev, s_button_clip_valid, s_move_clip_valid);
 }
 
 void sound_hooks_play(ui_sound_id_t id)
