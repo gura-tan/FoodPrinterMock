@@ -94,7 +94,8 @@ void app_main(void)
             }
 
             if (button_pressed && !button_was_pressed) {
-                /* 押し始め */
+                /* 押し始め: 画面遷移とは独立して、まず音だけ鳴らす */
+                sound_hooks_play(UI_SOUND_BUTTON);
                 press_started_tick = xTaskGetTickCount();
                 last_button_edge_tick = press_started_tick;
                 have_button_edge = true;
