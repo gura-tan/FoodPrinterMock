@@ -23,10 +23,15 @@ extern const uint8_t button_wav_end[]   asm("_binary_button_wav_end");
 extern const uint8_t move_wav_start[] asm("_binary_move_wav_start");
 extern const uint8_t move_wav_end[]   asm("_binary_move_wav_end");
 
-#define SOUND_QUEUE_LEN      4
 #define SOUND_TASK_STACK     4096
 #define SOUND_TASK_PRIORITY  5
 #define SOUND_OUT_VOLUME_PCT 90.0f  // 0.0〜100.0
+
+/* 再生を「即座に打ち切れる」ようにするためのチャンクサイズ(ms単位)。
+ * write()をこの単位に分割し、1チャンク書き終えるたびに新しい再生要求が
+ * 来ていないか確認する。小さいほど割り込みの反応が速くなる代わりに
+ * write()の呼び出し回数が増える。実機で聴感に応じて調整してよい。 */
+#define SOUND_CHUNK_MS  10
 
 typedef struct {
     const uint8_t *pcm_data;
@@ -106,11 +111,7 @@ static bool parse_wav(const uint8_t *buf, size_t len, sound_clip_t *out)
     return true;
 }
 
-/* オープン→書き込み→クローズをまとめた再生処理。
- * (要改善点: トリガーの都度open/closeしているため、まだ最終形の低遅延構成
- *  ではない。MOVE音はBUTTON音より高頻度に発火するため、この待ち時間が
- *  積み重なって遅延・音切れの原因になりやすい点は認識した上で使うこと) */
-static void play_clip(const sound_clip_t *clip)
+static bool ensure_codec_open(const sound_clip_t *clip)
 {
     esp_codec_dev_sample_info_t fs = {
         .sample_rate     = clip->sample_rate,
@@ -118,20 +119,54 @@ static void play_clip(const sound_clip_t *clip)
         .bits_per_sample = clip->bits_per_sample,
     };
 
+    if (s_codec_open && /* フォーマット一致チェック */ ) {
+        return true;
+    }
+    if (s_codec_open) {
+        esp_codec_dev_close(s_spk_dev);
+        s_codec_open = false;
+    }
+
+
     int ret = esp_codec_dev_open(s_spk_dev, &fs);
     if (ret != ESP_CODEC_DEV_OK) {
         ESP_LOGE(TAG, "esp_codec_dev_open failed: %d", ret);
-        return;
+        return false;
     }
+    s_codec_open_fmt = fs;
+    s_codec_open = true;
+    return true;
+}
 
+static void play_clip_interruptible(const sound_clip_t *clip)
+{
+    if (!ensure_codec_open(clip)) {
+         return;
+     }
     /* pcm_dataはconstだが、esp_codec_dev_write()の引数はvoid*なので
      * キャストしている(内部で書き換えられることはない) */
-    ret = esp_codec_dev_write(s_spk_dev, (void *)clip->pcm_data, clip->pcm_len);
-    if (ret != ESP_CODEC_DEV_OK) {
-        ESP_LOGE(TAG, "esp_codec_dev_write failed: %d", ret);
-    }
+    size_t bytes_per_frame = (clip->bits_per_sample / 8) * clip->channels;
+    size_t chunk_frames = (clip->sample_rate * SOUND_CHUNK_MS) / 1000;
+    size_t chunk_bytes = chunk_frames * bytes_per_frame;
+    if (bytes_per_frame == 0 || chunk_bytes == 0) {
+        chunk_bytes = clip->pcm_len;
+     }
 
-    esp_codec_dev_close(s_spk_dev);
+    size_t offset = 0;
+    while (offset < clip->pcm_len) {
+        if (uxQueueMessagesWaiting(s_sound_queue) > 0) {
+            ESP_LOGD(TAG, "playback interrupted by a newer sound request");
+            return;
+        }
+        size_t remain = clip->pcm_len - offset;
+        size_t n = (remain < chunk_bytes) ? remain : chunk_bytes;
+        int ret = esp_codec_dev_write(s_spk_dev, (void *)(clip->pcm_data + offset), n);
+        if (ret != ESP_CODEC_DEV_OK) {
+            ESP_LOGE(TAG, "esp_codec_dev_write failed: %d", ret);
+            return;
+        }
+        offset += n;
+    }
 }
 
 static void sound_task(void *arg)
@@ -166,7 +201,7 @@ static void sound_task(void *arg)
             continue;
         }
 
-        play_clip(clip);
+        play_clip_interruptible(clip);
     }
 }
 
@@ -191,7 +226,8 @@ void sound_hooks_init(void)
         ESP_LOGW(TAG, "move.wav の解析に失敗しました。main/sounds/move.wav を確認してください");
     }
 
-    s_sound_queue = xQueueCreate(SOUND_QUEUE_LEN, sizeof(ui_sound_id_t));
+    /* 長さ1のキュー: xQueueOverwrite()で送るため常に「最新の1件」だけが残る */
+    s_sound_queue = xQueueCreate(1, sizeof(ui_sound_id_t));
 
     /* 音声書き込み(I2S)はLVGLタスクとは別のコアの専用タスクで行う。
      * LVGLはスレッドセーフでないため、このタスクからlv_*系APIを直接
@@ -208,9 +244,5 @@ void sound_hooks_play(ui_sound_id_t id)
     if (s_sound_queue == NULL) {
         return;
     }
-    /* 呼び出し元(app_main.cのポーリングループ)をブロックしないよう、
-     * キューに積むだけですぐ戻る。実際の再生はsound_taskが行う。 */
-    if (xQueueSend(s_sound_queue, &id, 0) != pdTRUE) {
-        ESP_LOGW(TAG, "sound queue full, dropping sound id=%d", id);
-    }
+    xQueueOverwrite(s_sound_queue, &id);
 }
