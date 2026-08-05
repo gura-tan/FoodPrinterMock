@@ -9,6 +9,7 @@ idf_component_register(
     INCLUDE_DIRS "."
     EMBED_FILES
         "sounds/button.wav"   # 実行前にこのパスへ実ファイルを置くこと(README参照)
+        "sounds/move.wav"     # 実行前にこのパスへ実ファイルを置くこと(README参照)
     REQUIRES
         # managed_components/ 配下の実フォルダ名(espressif__m5stack_core_s3 等)から
         # ベンダー名プレフィックスを外したものがコンポーネント名になる
