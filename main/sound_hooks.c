@@ -44,6 +44,13 @@ static bool         s_move_clip_valid;
 static esp_codec_dev_handle_t s_spk_dev;
 static QueueHandle_t s_sound_queue;
 
+/* デバイスをopenしたままにし、フォーマットが変わった時だけ
+ * close→openし直す。トリガーの都度open/closeしていたときに
+ * "i2s_channel_disable: the channel has not been enabled yet" が
+ * 頻発し、無音/音切れの原因になっていたための対応。 */
+static bool s_dev_open;
+static esp_codec_dev_sample_info_t s_open_fs;
+
 /* ---- 最小限のWAVパーサ ----
  * RIFF/WAVEのチャンクを順に読み、"fmt " と "data" チャンクを見つける。
  * 非圧縮PCM(audio_format==1)のみ対応。WAVE_FORMAT_EXTENSIBLE等は非対応
@@ -106,10 +113,13 @@ static bool parse_wav(const uint8_t *buf, size_t len, sound_clip_t *out)
     return true;
 }
 
-/* オープン→書き込み→クローズをまとめた再生処理。
- * (要改善点: トリガーの都度open/closeしているため、まだ最終形の低遅延構成
- *  ではない。MOVE音はBUTTON音より高頻度に発火するため、この待ち時間が
- *  積み重なって遅延・音切れの原因になりやすい点は認識した上で使うこと) */
+static bool sample_info_equal(const esp_codec_dev_sample_info_t *a, const esp_codec_dev_sample_info_t *b)
+{
+    return a->sample_rate == b->sample_rate &&
+           a->channel == b->channel &&
+           a->bits_per_sample == b->bits_per_sample;
+}
+
 static void play_clip(const sound_clip_t *clip)
 {
     esp_codec_dev_sample_info_t fs = {
@@ -118,22 +128,40 @@ static void play_clip(const sound_clip_t *clip)
         .bits_per_sample = clip->bits_per_sample,
     };
 
-    int ret = esp_codec_dev_open(s_spk_dev, &fs);
-    if (ret != ESP_CODEC_DEV_OK) {
-        ESP_LOGE(TAG, "esp_codec_dev_open failed: %d", ret);
-        return;
+    bool need_reopen = !s_dev_open || !sample_info_equal(&fs, &s_open_fs);
+
+    if (need_reopen) {
+        if (s_dev_open) {
+            int cret = esp_codec_dev_close(s_spk_dev);
+            if (cret != ESP_CODEC_DEV_OK) {
+                ESP_LOGW(TAG, "esp_codec_dev_close failed: %d (再オープンを続行)", cret);
+            }
+            s_dev_open = false;
+        }
+
+        int oret = esp_codec_dev_open(s_spk_dev, &fs);
+        if (oret != ESP_CODEC_DEV_OK) {
+            ESP_LOGE(TAG, "esp_codec_dev_open failed: %d", oret);
+            return;
+        }
+        /* open()のたびに音量がリセットされる実装もあるため、
+         * フォーマット変更(=再open)のたびに念のため再適用しておく */
+        esp_codec_dev_set_out_vol(s_spk_dev, SOUND_OUT_VOLUME_PCT);
+        s_open_fs = fs;
+        s_dev_open = true;
     }
 
     /* pcm_dataはconstだが、esp_codec_dev_write()の引数はvoid*なので
      * キャストしている(内部で書き換えられることはない) */
-    ret = esp_codec_dev_write(s_spk_dev, (void *)clip->pcm_data, clip->pcm_len);
-    if (ret != ESP_CODEC_DEV_OK) {
-        ESP_LOGE(TAG, "esp_codec_dev_write failed: %d", ret);
+    int wret = esp_codec_dev_write(s_spk_dev, (void *)clip->pcm_data, clip->pcm_len);
+    if (wret != ESP_CODEC_DEV_OK) {
+        ESP_LOGE(TAG, "esp_codec_dev_write failed: %d", wret);
     }
 
-    esp_codec_dev_close(s_spk_dev);
+    /* 意図的にここではclose()しない。同じフォーマットの音が連続する間は
+     * デバイスをopenしたまま使い回し、フォーマットが変わる時だけ
+     * need_reopenの分岐でclose→open()し直す。 */
 }
-
 static void sound_task(void *arg)
 {
     (void)arg;
@@ -175,8 +203,6 @@ void sound_hooks_init(void)
     s_spk_dev = bsp_audio_codec_speaker_init();
     if (s_spk_dev == NULL) {
         ESP_LOGE(TAG, "bsp_audio_codec_speaker_init failed - 音は鳴りません");
-    } else {
-        esp_codec_dev_set_out_vol(s_spk_dev, SOUND_OUT_VOLUME_PCT);
     }
 
     size_t button_wav_len = (size_t)(button_wav_end - button_wav_start);
