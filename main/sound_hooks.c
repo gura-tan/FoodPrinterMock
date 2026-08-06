@@ -16,7 +16,7 @@ static const char *TAG = "sound_hooks";
 /*
  * 試作0の音トリガー用フック(SDカード読み込み版)。
  *
- * これまでmain/sounds/.wavをEMBED_FILESでファームウェアに直接埋め込んで
+ * これまでmain/sounds/*.wavをEMBED_FILESでファームウェアに直接埋め込んで
  * いたが、SDカードに移行した。SD上の
  *   <mount_point>/sounds/<preset>/{button,move,confirm,back,done}.wav
  * を起動時に一度だけ全部読み込み、ヒープ上のバッファに保持したまま
@@ -24,9 +24,18 @@ static const char *TAG = "sound_hooks";
  * 音飛びに直結するため、これまでのEMBED_FILES版と同じく「起動時に一度だけ
  * ロードしてRAM上のバッファを再生する」方式を維持している)。
  *
- * <preset>は sound_preset.txt (1行目の文字列) から決める。無ければ"default"。
+ * <preset>は preset.txt (1行目の文字列) から決める。無ければ"default"。
  * 実行中の切り替えはまだ実装していない(切り替えるには再起動が必要)。
  * SDカード上の配置ルールは main/SD_CARD_SOUND_SETUP.md 参照。
+ *
+ * 【重要】sdkconfigは CONFIG_FATFS_LFN_NONE=y (LFN無効・8.3短名のみ対応)。
+ * LFNを有効化するとファイルを開くたびに長い名前用のバッファを追加で
+ * 確保することになりメモリを圧迫するため、有効化はせず、SDカード上の
+ * ファイル名・フォルダ名はすべて「名前部分8文字以内・拡張子3文字以内・
+ * 半角英数字のみ」に収める方針にしている。実機ログで
+ * "Warning: Long filenames on SD card are disabled in menuconfig!" が
+ * 出るのは想定通りで問題ない(この制限内に収まっている限り実害はない)。
+ * 新しい音源やプリセット名を追加するときもこの制限を守ること。
  *
  * 【要確認】現在sdkconfigではPSRAM(CONFIG_SPIRAM)が無効になっている。
  * 5クリップ分をすべて内部SRAMに保持するとヒープを圧迫する可能性があるため、
@@ -188,12 +197,13 @@ static uint8_t *read_file_into_buffer(const char *path, size_t *out_len)
     return buf;
 }
 
-/* sound_preset.txt の1行目からプリセット名を決める。
- * 無い/読み取れない場合はDEFAULT_PRESET_NAMEを使う。 */
+/* preset.txt の1行目からプリセット名を決める。
+ * 無い/読み取れない場合はDEFAULT_PRESET_NAMEを使う。
+ * (旧sound_preset.txtは名前部分が12文字で8.3制限を超えていたためpreset.txtに短縮した) */
 static void resolve_preset_dir(char *out, size_t out_size)
 {
     char path[PATH_MAX_LEN];
-    snprintf(path, sizeof(path), "%s/sound_preset.txt", sd_storage_mount_point());
+    snprintf(path, sizeof(path), "%s/preset.txt", sd_storage_mount_point());
 
     FILE *f = fopen(path, "r");
     if (!f) {
