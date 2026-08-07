@@ -1,36 +1,58 @@
 #include "sound_hooks.h"
+#include "sd_storage.h"
 #include "bsp/esp-bsp.h"
 #include "esp_codec_dev.h"
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "freertos/queue.h"
+#include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
+#include <errno.h>
 
 static const char *TAG = "sound_hooks";
 
 /*
- * main/sounds/button.wav, main/sounds/move.wav を EMBED_FILES でファームウェアに
- * 埋め込む(main/CMakeLists.txt の EMBED_FILES 参照)。
- * シンボル名はファイルパスの '/' '.' を '_' に置き換えたもの
- * (_binary_button_wav_start/_end, _binary_move_wav_start/_end) になる。
- * もし「undefined reference」でリンクエラーになる場合は、
- * `find build -name "*.o" | xargs nm 2>/dev/null | grep _wav`
- * で実際のシンボル名を確認してほしい。
+ * 試作0の音トリガー用フック(SDカード読み込み版)。
+ *
+ * これまでmain/sounds/*.wavをEMBED_FILESでファームウェアに直接埋め込んで
+ * いたが、SDカードに移行した。SD上の
+ *   <mount_point>/sounds/<preset>/{button,move,confirm,back,done}.wav
+ * を起動時に一度だけ全部読み込み、ヒープ上のバッファに保持したまま
+ * 使い回す(毎回SDから読むとファイルI/Oのレイテンシが再生の遅延・
+ * 音飛びに直結するため、これまでのEMBED_FILES版と同じく「起動時に一度だけ
+ * ロードしてRAM上のバッファを再生する」方式を維持している)。
+ *
+ * <preset>は preset.txt (1行目の文字列) から決める。無ければ"default"。
+ * 実行中の切り替えはまだ実装していない(切り替えるには再起動が必要)。
+ * SDカード上の配置ルールは main/SD_CARD_SOUND_SETUP.md 参照。
+ *
+ * 【重要】sdkconfigは CONFIG_FATFS_LFN_NONE=y (LFN無効・8.3短名のみ対応)。
+ * LFNを有効化するとファイルを開くたびに長い名前用のバッファを追加で
+ * 確保することになりメモリを圧迫するため、有効化はせず、SDカード上の
+ * ファイル名・フォルダ名はすべて「名前部分8文字以内・拡張子3文字以内・
+ * 半角英数字のみ」に収める方針にしている。実機ログで
+ * "Warning: Long filenames on SD card are disabled in menuconfig!" が
+ * 出るのは想定通りで問題ない(この制限内に収まっている限り実害はない)。
+ * 新しい音源やプリセット名を追加するときもこの制限を守ること。
+ *
+ * 【要確認】現在sdkconfigではPSRAM(CONFIG_SPIRAM)が無効になっている。
+ * 5クリップ分をすべて内部SRAMに保持するとヒープを圧迫する可能性があるため、
+ * 同梱したsdkconfig.defaultsでPSRAMを有効化することを推奨する
+ * (`idf.py fullclean && idf.py build`で反映)。
  */
-extern const uint8_t button_wav_start[] asm("_binary_button_wav_start");
-extern const uint8_t button_wav_end[]   asm("_binary_button_wav_end");
-extern const uint8_t move_wav_start[] asm("_binary_move_wav_start");
-extern const uint8_t move_wav_end[]   asm("_binary_move_wav_end");
 
 #define SOUND_TASK_STACK     4096
 #define SOUND_TASK_PRIORITY  5
 #define SOUND_OUT_VOLUME_PCT 90.0f  // 0.0〜100.0
+#define DEFAULT_PRESET_NAME  "default"
+#define PRESET_NAME_MAX_LEN  48
+#define PATH_MAX_LEN         160
 
 /* 再生を「即座に打ち切れる」ようにするためのチャンクサイズ(ms単位)。
  * write()をこの単位に分割し、1チャンク書き終えるたびに新しい再生要求が
- * 来ていないか確認する。小さいほど割り込みの反応が速くなる代わりに
- * write()の呼び出し回数が増える。実機で聴感に応じて調整してよい。 */
+ * 来ていないか確認する。 */
 #define SOUND_CHUNK_MS  10
 
 typedef struct {
@@ -41,13 +63,33 @@ typedef struct {
     uint16_t       channels;
 } sound_clip_t;
 
-static sound_clip_t s_button_clip;
-static bool         s_button_clip_valid;
-static sound_clip_t s_move_clip;
-static bool         s_move_clip_valid;
+typedef struct {
+    sound_clip_t clip;
+    uint8_t     *file_buf;  // ファイル全体を保持するmalloc済みバッファ。
+                             // clip.pcm_dataはこのバッファ内を指しているため、
+                             // 有効な間は解放しない(プリセット切り替え機能を
+                             // 実装するときに初めて解放処理が要る)
+    bool         valid;
+} sound_slot_t;
+
+static const char *const k_sound_filenames[UI_SOUND_DONE + 1] = {
+    [UI_SOUND_BUTTON]  = "button.wav",
+    [UI_SOUND_MOVE]    = "move.wav",
+    [UI_SOUND_CONFIRM] = "confirm.wav",
+    [UI_SOUND_BACK]    = "back.wav",
+    [UI_SOUND_DONE]    = "done.wav",
+};
+
+static sound_slot_t s_slots[UI_SOUND_DONE + 1];
 
 static esp_codec_dev_handle_t s_spk_dev;
 static QueueHandle_t s_sound_queue;
+
+/* 直前にesp_codec_dev_open()した際のフォーマットをキャッシュしておき、
+ * 同じフォーマットのクリップが連続する場合はclose/openし直さない。
+ * (これが以前undefinedのまま参照されていて、ビルドが通らない状態だった箇所) */
+static bool s_codec_open;
+static esp_codec_dev_sample_info_t s_codec_open_fmt;
 
 /* ---- 最小限のWAVパーサ ----
  * RIFF/WAVEのチャンクを順に読み、"fmt " と "data" チャンクを見つける。
@@ -111,6 +153,128 @@ static bool parse_wav(const uint8_t *buf, size_t len, sound_clip_t *out)
     return true;
 }
 
+/* ---- SDカードからのファイル読み込み ---- */
+
+static uint8_t *read_file_into_buffer(const char *path, size_t *out_len)
+{
+    FILE *f = fopen(path, "rb");
+    if (!f) {
+        ESP_LOGW(TAG, "cannot open %s (%s) - このサウンドは無効になります", path, strerror(errno));
+        return NULL;
+    }
+
+    if (fseek(f, 0, SEEK_END) != 0) {
+        ESP_LOGW(TAG, "fseek(SEEK_END) failed for %s", path);
+        fclose(f);
+        return NULL;
+    }
+    long size = ftell(f);
+    if (size <= 0) {
+        ESP_LOGW(TAG, "%s is empty or ftell failed", path);
+        fclose(f);
+        return NULL;
+    }
+    rewind(f);
+
+    uint8_t *buf = malloc((size_t)size);
+    if (!buf) {
+        ESP_LOGE(TAG, "malloc(%ld bytes) failed for %s - "
+                      "ヒープ不足の可能性(sdkconfig.defaultsでPSRAM有効化を検討)",
+                 size, path);
+        fclose(f);
+        return NULL;
+    }
+
+    size_t read_bytes = fread(buf, 1, (size_t)size, f);
+    fclose(f);
+    if (read_bytes != (size_t)size) {
+        ESP_LOGW(TAG, "short read on %s (%u/%ld bytes)", path, (unsigned)read_bytes, size);
+        free(buf);
+        return NULL;
+    }
+
+    *out_len = (size_t)size;
+    return buf;
+}
+
+/* preset.txt の1行目からプリセット名を決める。
+ * 無い/読み取れない場合はDEFAULT_PRESET_NAMEを使う。
+ * (旧sound_preset.txtは名前部分が12文字で8.3制限を超えていたためpreset.txtに短縮した) */
+static void resolve_preset_dir(char *out, size_t out_size)
+{
+    char path[PATH_MAX_LEN];
+    snprintf(path, sizeof(path), "%s/preset.txt", sd_storage_mount_point());
+
+    FILE *f = fopen(path, "r");
+    if (!f) {
+        ESP_LOGI(TAG, "%s が見つからないため preset=\"%s\" を使用します", path, DEFAULT_PRESET_NAME);
+        snprintf(out, out_size, "%s", DEFAULT_PRESET_NAME);
+        return;
+    }
+
+    if (!fgets(out, (int)out_size, f)) {
+        snprintf(out, out_size, "%s", DEFAULT_PRESET_NAME);
+    }
+    fclose(f);
+
+    /* 改行・末尾の空白を除去 */
+    size_t n = strlen(out);
+    while (n > 0 && (out[n - 1] == '\n' || out[n - 1] == '\r' || out[n - 1] == ' ')) {
+        out[--n] = '\0';
+    }
+    if (n == 0) {
+        snprintf(out, out_size, "%s", DEFAULT_PRESET_NAME);
+    }
+
+    ESP_LOGI(TAG, "sound preset = \"%s\"", out);
+}
+
+static void load_sound_slot(ui_sound_id_t id, const char *preset_dir)
+{
+    sound_slot_t *slot = &s_slots[id];
+    slot->valid = false;
+    slot->file_buf = NULL;
+
+    char path[PATH_MAX_LEN];
+    snprintf(path, sizeof(path), "%s/sounds/%s/%s",
+             sd_storage_mount_point(), preset_dir, k_sound_filenames[id]);
+
+    size_t len = 0;
+    uint8_t *buf = read_file_into_buffer(path, &len);
+    if (!buf) {
+        return; // 個別のログはread_file_into_buffer側で出力済み
+    }
+
+    if (!parse_wav(buf, len, &slot->clip)) {
+        ESP_LOGW(TAG, "%s の解析に失敗しました", path);
+        free(buf);
+        return;
+    }
+
+    slot->file_buf = buf;
+    slot->valid = true;
+    ESP_LOGI(TAG, "loaded %s", path);
+}
+
+static void load_all_sound_slots(void)
+{
+    char preset_dir[PRESET_NAME_MAX_LEN];
+    resolve_preset_dir(preset_dir, sizeof(preset_dir));
+
+    for (int i = 0; i <= UI_SOUND_DONE; i++) {
+        load_sound_slot((ui_sound_id_t)i, preset_dir);
+    }
+}
+
+/* ---- 再生 ---- */
+
+static bool sample_info_equal(const esp_codec_dev_sample_info_t *a, const esp_codec_dev_sample_info_t *b)
+{
+    return a->sample_rate == b->sample_rate &&
+           a->channel == b->channel &&
+           a->bits_per_sample == b->bits_per_sample;
+}
+
 static bool ensure_codec_open(const sound_clip_t *clip)
 {
     esp_codec_dev_sample_info_t fs = {
@@ -119,14 +283,13 @@ static bool ensure_codec_open(const sound_clip_t *clip)
         .bits_per_sample = clip->bits_per_sample,
     };
 
-    if (s_codec_open && /* フォーマット一致チェック */ ) {
-        return true;
+    if (s_codec_open && sample_info_equal(&s_codec_open_fmt, &fs)) {
+        return true; // 直前と同じフォーマットなので開き直し不要
     }
     if (s_codec_open) {
         esp_codec_dev_close(s_spk_dev);
         s_codec_open = false;
     }
-
 
     int ret = esp_codec_dev_open(s_spk_dev, &fs);
     if (ret != ESP_CODEC_DEV_OK) {
@@ -141,8 +304,9 @@ static bool ensure_codec_open(const sound_clip_t *clip)
 static void play_clip_interruptible(const sound_clip_t *clip)
 {
     if (!ensure_codec_open(clip)) {
-         return;
-     }
+        return;
+    }
+
     /* pcm_dataはconstだが、esp_codec_dev_write()の引数はvoid*なので
      * キャストしている(内部で書き換えられることはない) */
     size_t bytes_per_frame = (clip->bits_per_sample / 8) * clip->channels;
@@ -150,7 +314,7 @@ static void play_clip_interruptible(const sound_clip_t *clip)
     size_t chunk_bytes = chunk_frames * bytes_per_frame;
     if (bytes_per_frame == 0 || chunk_bytes == 0) {
         chunk_bytes = clip->pcm_len;
-     }
+    }
 
     size_t offset = 0;
     while (offset < clip->pcm_len) {
@@ -179,29 +343,12 @@ static void sound_task(void *arg)
             continue;
         }
 
-        const sound_clip_t *clip = NULL;
-        switch (id) {
-        case UI_SOUND_BUTTON:
-            if (s_button_clip_valid) {
-                clip = &s_button_clip;
-            }
-            break;
-        case UI_SOUND_MOVE:
-            if (s_move_clip_valid) {
-                clip = &s_move_clip;
-            }
-            break;
-        default:
-            break;
-        }
-
-        if (clip == NULL || s_spk_dev == NULL) {
-            /* CONFIRM/BACK/DONEはまだ音源が無いのでログのみ(従来通り) */
-            ESP_LOGD(TAG, "sound id=%d: no clip yet (stub)", id);
+        if (id < 0 || id > UI_SOUND_DONE || !s_slots[id].valid || s_spk_dev == NULL) {
+            ESP_LOGD(TAG, "sound id=%d: no clip available", id);
             continue;
         }
 
-        play_clip_interruptible(clip);
+        play_clip_interruptible(&s_slots[id].clip);
     }
 }
 
@@ -214,16 +361,10 @@ void sound_hooks_init(void)
         esp_codec_dev_set_out_vol(s_spk_dev, SOUND_OUT_VOLUME_PCT);
     }
 
-    size_t button_wav_len = (size_t)(button_wav_end - button_wav_start);
-    s_button_clip_valid = parse_wav(button_wav_start, button_wav_len, &s_button_clip);
-    if (!s_button_clip_valid) {
-        ESP_LOGW(TAG, "button.wav の解析に失敗しました。main/sounds/button.wav を確認してください");
-    }
-
-    size_t move_wav_len = (size_t)(move_wav_end - move_wav_start);
-    s_move_clip_valid = parse_wav(move_wav_start, move_wav_len, &s_move_clip);
-    if (!s_move_clip_valid) {
-        ESP_LOGW(TAG, "move.wav の解析に失敗しました。main/sounds/move.wav を確認してください");
+    if (sd_storage_mount() == ESP_OK) {
+        load_all_sound_slots();
+    } else {
+        ESP_LOGW(TAG, "SDカードがマウントできなかったため、すべてのUI音が無効になります");
     }
 
     /* 長さ1のキュー: xQueueOverwrite()で送るため常に「最新の1件」だけが残る */
@@ -235,8 +376,14 @@ void sound_hooks_init(void)
     xTaskCreatePinnedToCore(sound_task, "sound_task", SOUND_TASK_STACK, NULL,
                              SOUND_TASK_PRIORITY, NULL, 0);
 
-    ESP_LOGI(TAG, "sound_hooks_init done (spk_dev=%p, button_clip_valid=%d, move_clip_valid=%d)",
-             (void *)s_spk_dev, s_button_clip_valid, s_move_clip_valid);
+    int valid_count = 0;
+    for (int i = 0; i <= UI_SOUND_DONE; i++) {
+        if (s_slots[i].valid) {
+            valid_count++;
+        }
+    }
+    ESP_LOGI(TAG, "sound_hooks_init done (spk_dev=%p, %d/%d clips loaded)",
+             (void *)s_spk_dev, valid_count, UI_SOUND_DONE + 1);
 }
 
 void sound_hooks_play(ui_sound_id_t id)
