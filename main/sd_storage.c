@@ -11,13 +11,19 @@ esp_err_t sd_storage_mount(void)
         return ESP_OK;
     }
 
-    /* 【要確認】BSPバージョンによっては引数の有無やデフォルト設定が異なる
-     * 場合がある。espressif/m5stack_core_s3 3.0.2 のヘッダで実際のシグネチャを
-     * 確認してほしい(sd_storage.h側にも同じ注記あり)。 */
-    esp_err_t err = bsp_sdcard_mount();
+    /* 【2026/08/07 Notion調査で判明・確認済み】CoreS3はSDカードスロットと
+     * LCD(ili9341)が同じSPIバスを共有しており、SDMMC(専用線)経由の接続が
+     * 存在しない。espressif/m5stack_core_s3の汎用bsp_sdcard_mount()は
+     * SDMMC経路を試みて常にESP_ERR_NOT_SUPPORTED(またはこのプロジェクトの
+     * ログで見えたようなESP_ERR_TIMEOUT)を返すため、CoreS3では使えない。
+     * 代わりにbsp_sdcard_sdspi_mount()をSPIモードで明示的に呼ぶ必要がある。
+     * cfgを{0}で初期化すれば、bsp_sdcard_get_sdspi_host()/get_sdspi_slot()
+     * 経由でCoreS3用のデフォルト設定(SPI3ホスト、CSピン等)が自動補完される。 */
+    bsp_sdcard_cfg_t cfg = {0};
+    esp_err_t err = bsp_sdcard_sdspi_mount(&cfg);
     if (err != ESP_OK) {
         ESP_LOGE(TAG,
-                 "bsp_sdcard_mount failed: %s "
+                 "bsp_sdcard_sdspi_mount failed: %s "
                  "(SDカードが挿さっているか、FAT32/exFATでフォーマットされているか確認してください)",
                  esp_err_to_name(err));
         return err;
@@ -33,7 +39,7 @@ void sd_storage_unmount(void)
     if (!s_mounted) {
         return;
     }
-    bsp_sdcard_unmount();
+    bsp_sdcard_unmount(); // アンマウントは汎用APIのままでよい(mountと違い機種分岐不要)
     s_mounted = false;
     ESP_LOGI(TAG, "sd card unmounted");
 }
