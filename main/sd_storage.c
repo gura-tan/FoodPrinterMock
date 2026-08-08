@@ -1,9 +1,23 @@
 #include "sd_storage.h"
 #include "bsp/esp-bsp.h"
 #include "esp_log.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
 
 static const char *TAG = "sd_storage";
 static bool s_mounted;
+
+/* 【2026/08/08 実機調査】カード自体はPCのカードリーダーではFAT32で正常に
+ * 読み書きできる状態なのに、CoreS3上ではbsp_sdcard_sdspi_mount()内の
+ * sdmmc_card_init()がESP_ERR_TIMEOUT(0x107)で失敗する事象を確認。
+ * bsp_enable_feature(BSP_FEATURE_SD)でカード電源(AXP2101 ALDO4)をONに
+ * した直後、電源安定待ちを一切入れずにSPIプローブ(CMD0等)を投げているため、
+ * 電源が安定しきる前に初回コマンドが失敗している可能性がある。
+ * BSP側(managed_components配下、vendor管理)は変更せず、こちら側で
+ * 電源安定待ちの短いディレイと数回のリトライを行うことで対処する。 */
+#define SD_MOUNT_SETTLE_DELAY_MS  50
+#define SD_MOUNT_RETRY_COUNT      3
+#define SD_MOUNT_RETRY_DELAY_MS   150
 
 esp_err_t sd_storage_mount(void)
 {
@@ -19,13 +33,29 @@ esp_err_t sd_storage_mount(void)
      * 代わりにbsp_sdcard_sdspi_mount()をSPIモードで明示的に呼ぶ必要がある。
      * cfgを{0}で初期化すれば、bsp_sdcard_get_sdspi_host()/get_sdspi_slot()
      * 経由でCoreS3用のデフォルト設定(SPI3ホスト、CSピン等)が自動補完される。 */
-    bsp_sdcard_cfg_t cfg = {0};
-    esp_err_t err = bsp_sdcard_sdspi_mount(&cfg);
+    vTaskDelay(pdMS_TO_TICKS(SD_MOUNT_SETTLE_DELAY_MS));
+
+    esp_err_t err = ESP_FAIL;
+    for (int attempt = 1; attempt <= SD_MOUNT_RETRY_COUNT; attempt++) {
+        /* cfg->host/cfg->slot.sdspiはbsp_sdcard_sdspi_mount()内部のスタック
+         * 変数を指すため、リトライのたびに必ず作り直す(使い回すとダングリング
+         * ポインタになる)。 */
+        bsp_sdcard_cfg_t cfg = {0};
+        err = bsp_sdcard_sdspi_mount(&cfg);
+        if (err == ESP_OK) {
+            break;
+        }
+        ESP_LOGW(TAG, "bsp_sdcard_sdspi_mount attempt %d/%d failed: %s",
+                 attempt, SD_MOUNT_RETRY_COUNT, esp_err_to_name(err));
+        if (attempt < SD_MOUNT_RETRY_COUNT) {
+            vTaskDelay(pdMS_TO_TICKS(SD_MOUNT_RETRY_DELAY_MS));
+        }
+    }
     if (err != ESP_OK) {
         ESP_LOGE(TAG,
-                 "bsp_sdcard_sdspi_mount failed: %s "
+                 "bsp_sdcard_sdspi_mount failed after %d attempts: %s "
                  "(SDカードが挿さっているか、FAT32/exFATでフォーマットされているか確認してください)",
-                 esp_err_to_name(err));
+                 SD_MOUNT_RETRY_COUNT, esp_err_to_name(err));
         return err;
     }
 

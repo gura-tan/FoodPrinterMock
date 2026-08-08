@@ -38,6 +38,18 @@ void app_main(void)
 {
     ESP_LOGI(TAG, "food printer prototype0 starting");
 
+    /* 【2026/08/08 実機調査で確定】CoreS3はLCDのDCピンとSD/LCDのMISOピンが
+     * 同じGPIO35を共有しており、bsp_display_start()(LVGLの常時再描画タスクが
+     * DCピンを駆動し続ける)を先に呼んでしまうと、その後のSDカードへの実際の
+     * 読み込みは100%失敗する(sdmmc_card_init/sdmmc_read_sectors_dmaが
+     * ESP_ERR_TIMEOUTで確実に落ちる)ことを実機切り分けで確認済み。
+     * マウントだけでなく実ファイル読み込みまで含めて、必ずLCD起動より前に
+     * 完了させる必要があるため、sound_hooks_init()(SDマウント+全wav読み込み)
+     * をbsp_display_start()より前に呼ぶ順序に変更している。以前の版で
+     * ここが逆順(表示を先に初期化)だったのがSDカードから音が鳴らなかった
+     * 直接の原因。 */
+    sound_hooks_init();
+
     /* CoreS3のディスプレイ・タッチ・LVGL処理タスクを初期化。
      * すでに他の場所で bsp_display_start() を呼んでいる場合は二重に呼ばないこと。
      * bsp_display_lock()/unlock() の関数名・シグネチャは使用中のBSPバージョンで
@@ -45,7 +57,16 @@ void app_main(void)
     bsp_display_start();
     bsp_display_backlight_on();
 
-    ESP_ERROR_CHECK(encoder_init());
+    /* エンコーダー未接続でも起動を継続できるようにする(以前はESP_ERROR_CHECKで
+     * 即abort→再起動ループしていた)。encoder_poll()は未初期化なら
+     * ESP_ERR_INVALID_STATEを返すだけで、呼び出し側(下のwhileループ)は
+     * 既にエラーを警告ログだけで無視して継続する作りになっているので、
+     * ここを緩めるだけで安全に動く。 */
+    esp_err_t encoder_err = encoder_init();
+    if (encoder_err != ESP_OK) {
+        ESP_LOGW(TAG, "encoder_init failed: %s (エンコーダー未接続の可能性。切り分けのため起動は継続します)",
+                 esp_err_to_name(encoder_err));
+    }
 
 #if ENCODER_REGISTER_SCAN_MODE
     ESP_LOGW(TAG, "ENCODER_REGISTER_SCAN_MODE=1: レジスタダンプのみ実行し、UIは初期化しません");
@@ -58,8 +79,6 @@ void app_main(void)
         vTaskDelay(pdMS_TO_TICKS(300));
     }
 #endif
-
-    sound_hooks_init();
 
     nav_init();
 
