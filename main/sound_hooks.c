@@ -16,7 +16,7 @@ static const char *TAG = "sound_hooks";
 /*
  * 試作0の音トリガー用フック(SDカード読み込み版)。
  *
- * これまでmain/sounds/*.wavをEMBED_FILESでファームウェアに直接埋め込んで
+ * これまでmain/sounds/＊.wavをEMBED_FILESでファームウェアに直接埋め込んで
  * いたが、SDカードに移行した。SD上の
  *   <mount_point>/sounds/<preset>/{button,move,confirm,back,done}.wav
  * を起動時に一度だけ全部読み込み、ヒープ上のバッファに保持したまま
