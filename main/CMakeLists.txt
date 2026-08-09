@@ -7,6 +7,7 @@ idf_component_register(
         "encoder_unit.c"
         "sound_hooks.c"
         "sd_storage.c"
+        "fonts/font_ja_menu_14.c"
     INCLUDE_DIRS "."
     REQUIRES
         # managed_components/ 配下の実フォルダ名(espressif__m5stack_core_s3 等)から

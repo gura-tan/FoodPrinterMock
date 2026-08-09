@@ -1,6 +1,7 @@
 #include "ui_screens.h"
 #include "menu_data.h"
 #include "lvgl.h"
+#include "fonts/font_ja_menu_14.h"
 #include <string.h>
 
 /*
@@ -45,6 +46,11 @@ void ui_screens_init(void)
 {
     s_screen = lv_obj_create(NULL);
     lv_obj_set_style_bg_color(s_screen, lv_color_hex(0x101010), 0);
+    /* ルートに設定すればスタイル継承でタイトルラベル・rollerの項目テキスト
+     * 双方に効く。デフォルトの CONFIG_LV_FONT_SOURCE_HAN_SANS_SC_14_CJK は
+     * 簡体字中国語向けの字形セットで「揚」「麺」等が欠けていたための対応
+     * (詳細は main/fonts/font_ja_menu_14.h 参照)。 */
+    lv_obj_set_style_text_font(s_screen, &font_ja_menu_14, 0);
 
     s_title_label = lv_label_create(s_screen);
     lv_obj_set_style_text_color(s_title_label, lv_color_hex(0xffffff), 0);
