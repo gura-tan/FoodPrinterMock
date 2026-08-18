@@ -58,7 +58,7 @@ static const char *TAG = "sound_hooks";
  * ここを書き換えて `idf.py build && idf.py flash` するだけでパターンを
  * 切り替えられる。
  * 例: #define SOUND_PRESET_OVERRIDE "16E" */
-#define SOUND_PRESET_OVERRIDE "48"
+#define SOUND_PRESET_OVERRIDE "03"
 
 /* 再生を「即座に打ち切れる」ようにするためのチャンクサイズ(ms単位)。
  * write()をこの単位に分割し、1チャンク書き終えるたびに新しい再生要求が
@@ -91,6 +91,14 @@ static const char *const k_sound_filenames[UI_SOUND_DONE + 1] = {
 };
 
 static sound_slot_t s_slots[UI_SOUND_DONE + 1];
+
+/* キューに積む要求。interrupt=trueなら再生中の音を即座に打ち切って割り込み、
+ * falseなら再生中の音が自然に終わるまで待ってから鳴らす(その間に別の
+ * 要求が来れば、それに上書きされて消える。詳細はsound_hooks.h参照)。 */
+typedef struct {
+    ui_sound_id_t id;
+    bool          interrupt;
+} sound_request_t;
 
 static esp_codec_dev_handle_t s_spk_dev;
 static QueueHandle_t s_sound_queue;
@@ -335,7 +343,12 @@ static void play_clip_interruptible(const sound_clip_t *clip)
 
     size_t offset = 0;
     while (offset < clip->pcm_len) {
-        if (uxQueueMessagesWaiting(s_sound_queue) > 0) {
+        sound_request_t pending;
+        /* interrupt=trueの要求が待っているときだけ今の再生を打ち切る。
+         * interrupt=false(chained)の要求は、今の再生が終わってから
+         * sound_task側で自然にxQueueReceive()されるのでここでは無視する
+         * (xQueuePeek()は取り出さずに覗くだけなので、後段の受信に影響しない)。 */
+        if (xQueuePeek(s_sound_queue, &pending, 0) == pdTRUE && pending.interrupt) {
             ESP_LOGD(TAG, "playback interrupted by a newer sound request");
             return;
         }
@@ -353,13 +366,14 @@ static void play_clip_interruptible(const sound_clip_t *clip)
 static void sound_task(void *arg)
 {
     (void)arg;
-    ui_sound_id_t id;
+    sound_request_t req;
 
     for (;;) {
-        if (xQueueReceive(s_sound_queue, &id, portMAX_DELAY) != pdTRUE) {
+        if (xQueueReceive(s_sound_queue, &req, portMAX_DELAY) != pdTRUE) {
             continue;
         }
 
+        ui_sound_id_t id = req.id;
         if (id < 0 || id > UI_SOUND_DONE || !s_slots[id].valid || s_spk_dev == NULL) {
             ESP_LOGD(TAG, "sound id=%d: no clip available", id);
             continue;
@@ -385,7 +399,7 @@ void sound_hooks_init(void)
     }
 
     /* 長さ1のキュー: xQueueOverwrite()で送るため常に「最新の1件」だけが残る */
-    s_sound_queue = xQueueCreate(1, sizeof(ui_sound_id_t));
+    s_sound_queue = xQueueCreate(1, sizeof(sound_request_t));
 
     /* 音声書き込み(I2S)はLVGLタスクとは別のコアの専用タスクで行う。
      * LVGLはスレッドセーフでないため、このタスクからlv_*系APIを直接
@@ -408,5 +422,15 @@ void sound_hooks_play(ui_sound_id_t id)
     if (s_sound_queue == NULL) {
         return;
     }
-    xQueueOverwrite(s_sound_queue, &id);
+    sound_request_t req = { .id = id, .interrupt = true };
+    xQueueOverwrite(s_sound_queue, &req);
+}
+
+void sound_hooks_play_chained(ui_sound_id_t id)
+{
+    if (s_sound_queue == NULL) {
+        return;
+    }
+    sound_request_t req = { .id = id, .interrupt = false };
+    xQueueOverwrite(s_sound_queue, &req);
 }

@@ -128,10 +128,16 @@ void app_main(void)
                 bool need_refresh = true;
                 if (held_ms >= CANCEL_HOLD_MS) {
                     nav_back();
-                    sound_hooks_play(UI_SOUND_BACK);
+                    /* 離した瞬間のこの音は、押し始めに鳴らしたUI_SOUND_BUTTONの
+                     * 続きとして扱う(sound_hooks_play_chained()を使い、
+                     * BUTTON音がまだ再生中でもテールを打ち切らない)。
+                     * ダイヤル操作や次のボタン押下のような「別の新しい入力」が
+                     * 来た場合はsound_hooks_play()(即時割り込み版)のままなので、
+                     * そちらは従来通り上書きされる。 */
+                    sound_hooks_play_chained(UI_SOUND_BACK);
                 } else {
                     bool finished = nav_confirm();
-                    sound_hooks_play(finished ? UI_SOUND_DONE : UI_SOUND_CONFIRM);
+                    sound_hooks_play_chained(finished ? UI_SOUND_DONE : UI_SOUND_CONFIRM);
                     if (finished) {
                         ESP_LOGI(TAG, "all parameters confirmed - resetting to major category (demo loop)");
                         nav_init();

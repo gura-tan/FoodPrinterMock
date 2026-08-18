@@ -6,15 +6,9 @@ extern "C" {
 
 /*
  * 試作0の音トリガー用フック。
- * UI_SOUND_BUTTON (ボタンを押した瞬間) と UI_SOUND_MOVE (ダイヤルが1ステップ動いた瞬間) は
- * それぞれ button.wav / move.wav を実際に再生する。他のイベント(CONFIRM/BACK/DONE)は
- * これまで通りログ出力のみのスタブ。
- *
- * 音声データはmicroSDからではなく、main/sounds/move.wavをEMBED_FILESで
- * ファームウェアに直接埋め込んだものを再生する(main/CMakeLists.txt参照)。
- * SDカード読み込みに切り替える際は、sound_hooks.c内部の「PCMデータへの
- * ポインタを渡して鳴らす」という構造はそのまま使い、データの取得元だけを
- * 差し替えればよい。
+ * UI_SOUND_BUTTON/MOVE/CONFIRM/BACK/DONEのいずれも、SDカード上の対応する
+ * wavファイルを起動時に読み込み済みであれば実際に再生する(詳細は
+ * sound_hooks.cおよびmain/SD_CARD_SOUND_SETUP.md参照)。
  */
 
 typedef enum {
@@ -26,7 +20,18 @@ typedef enum {
 } ui_sound_id_t;
 
 void sound_hooks_init(void);
+
+/* 再生中の音を即座に打ち切って割り込む(ボタン押下・ダイヤル操作など、
+ * ユーザーの新しい入力に対する即時フィードバック用)。 */
 void sound_hooks_play(ui_sound_id_t id);
+
+/* 再生中の音を打ち切らず、自然に終わるのを待ってから鳴らす。
+ * ただし待っている間にsound_hooks_play()(即時割り込み版)や
+ * 別のsound_hooks_play_chained()が呼ばれると、そちらに上書きされて
+ * このリクエストは鳴らないまま消える。
+ * (例: ボタンを押した瞬間のクリック音がまだ再生中でも、離した瞬間の
+ * CONFIRM/BACK/DONE音がそのクリック音のテールを打ち切らないようにする) */
+void sound_hooks_play_chained(ui_sound_id_t id);
 
 #ifdef __cplusplus
 }
