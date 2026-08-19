@@ -53,9 +53,13 @@ static void build_roller_options_string(char *buf, size_t buf_size)
  * パラメータの円だけアクセントカラーにする(main/../デザインスケッチ-
  * パラメーター.png参照)。円の見た目:
  *   - パラメータの円: 背景(LV_PART_MAIN)は非表示にし、インジケータ
- *     (LV_PART_INDICATOR)だけを12時方向に隙間を残して表示 → 値が増えるほど
- *     時計回りにリングが伸びる(lv_arc_set_bg_angles()のデフォルトの
- *     並び(135,45)は6時方向に隙間ができるため、上下反転させた(315,225)を使う)
+ *     (LV_PART_INDICATOR)だけを12時ちょうどから表示 → 値が増えるほど
+ *     時計回りにリングが伸び、maxで隙間なく1周する(bg_angle_endに
+ *     start+360を明示的に渡すと、lv_arc内部のラップアラウンド判定
+ *     (end<startのときだけ+360する)を素通りしてそのまま360°分の
+ *     スイープ幅として使われる。デフォルトの(135,45)も内部的には
+ *     135→405に補正されて使われており、この仕組み自体はライブラリの
+ *     標準動作)
  *   - START の円: 常に満円のリング(値の概念を持たない仮想ステップ)
  * 塩味だけは数値の代わりにアイコン(icon_salt, main/icons/参照)を中央に置く。
  * アイコンはA8(アルファのみ)フォーマットなのでimage_recolorスタイルの色が
@@ -69,8 +73,8 @@ static void build_roller_options_string(char *buf, size_t buf_size)
 #define GAUGE_DIAMETER         88
 #define GAUGE_ARC_WIDTH         8
 #define GAUGE_Y_OFFSET         14   // タイトルの下に少し余裕を持たせる
-#define GAUGE_ANGLE_BG_START  315   // 12時方向にギャップができる範囲(スケッチに合わせる)
-#define GAUGE_ANGLE_BG_END    225
+#define GAUGE_ANGLE_BG_START  270   // 12時ちょうど(0deg=3時, 90deg=6時, 180deg=9時, 270deg=12時)
+#define GAUGE_ANGLE_BG_END    (GAUGE_ANGLE_BG_START + 360) // 隙間なく時計回りに1周させる
 #define GAUGE_COLOR_ACTIVE  0x3399ff  // 操作中の円のアクセントカラー(スケッチのSTARTの青)
 #define GAUGE_COLOR_INACTIVE 0x606060 // 操作対象外の円のグレー
 
