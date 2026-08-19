@@ -281,7 +281,13 @@ void app_main(void)
 
             if (delta != 0 && !within_jitter_guard) {
                 nav_move_selection(delta);
-                sound_hooks_play(UI_SOUND_MOVE);
+                /* 即時割り込み版ではなくchained版を使う: ジッターガードの
+                 * 猶予(BUTTON_JITTER_GUARD_MS)を過ぎてから来た回転量は、
+                 * ボタン操作に起因する機構的なガタの可能性がまだ残っている。
+                 * MOVE音がPROCEED/DONEなど直前の音(特にリバーブテール)を
+                 * 打ち切ってしまわないよう、現在の再生が自然に終わるのを
+                 * 待ってから鳴らす。 */
+                sound_hooks_play_chained(UI_SOUND_MOVE);
                 bsp_display_lock(0);
                 ui_screens_sync_selection();
                 bsp_display_unlock();
