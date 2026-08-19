@@ -1,5 +1,6 @@
 #pragma once
 #include <stdbool.h>
+#include <stddef.h>
 #include "esp_err.h"
 
 #ifdef __cplusplus
@@ -33,6 +34,19 @@ bool sd_storage_is_mounted(void);
 
 /* マウントポイントの文字列 (例: "/sdcard")。CONFIG_BSP_SD_MOUNT_POINT をそのまま返す。 */
 const char *sd_storage_mount_point(void);
+
+#define SD_STORAGE_PRESET_NAME_MAX  32
+#define SD_STORAGE_MAX_PRESET_DIRS  16
+
+/* <mount>/sounds 直下のディレクトリ名一覧を取得する(デバッグ用プリセット
+ * 選択画面向け)。names[0..戻り値-1]に格納し、戻り値は実際に見つかった数
+ * (max_countで頭打ち)。マウントされていない/soundsディレクトリが無い等の
+ * 失敗時は0を返す。
+ *
+ * 【重要】sound_hooks_init()のwavロードと同じ制約: bsp_display_start()を
+ * 呼んだ後はSDカードへの実際の読み込みが100%失敗するため、この関数は
+ * 必ずbsp_display_start()より前に呼ぶこと。 */
+size_t sd_storage_list_preset_dirs(char names[][SD_STORAGE_PRESET_NAME_MAX], size_t max_count);
 
 #ifdef __cplusplus
 }

@@ -1,5 +1,6 @@
 #include "sound_hooks.h"
 #include "sd_storage.h"
+#include "debug_preset.h"
 #include "bsp/esp-bsp.h"
 #include "esp_codec_dev.h"
 #include "esp_log.h"
@@ -18,7 +19,7 @@ static const char *TAG = "sound_hooks";
  *
  * これまでmain/sounds/＊.wavをEMBED_FILESでファームウェアに直接埋め込んで
  * いたが、SDカードに移行した。SD上の
- *   <mount_point>/sounds/<preset>/{button,move,confirm,back,done}.wav
+ *   <mount_point>/sounds/<preset>/{hit,proceed,move,back,done}.wav
  * を起動時に一度だけ全部読み込み、ヒープ上のバッファに保持したまま
  * 使い回す(毎回SDから読むとファイルI/Oのレイテンシが再生の遅延・
  * 音飛びに直結するため、これまでのEMBED_FILES版と同じく「起動時に一度だけ
@@ -51,14 +52,17 @@ static const char *TAG = "sound_hooks";
 #define PATH_MAX_LEN         160
 
 /* 【検証用】WAVフォーマットのパターン切り替え。
- * 空文字列""ならこれまで通りSDカード上の /sdcard/preset.txt (無ければ
- * DEFAULT_PRESET_NAME)を見て使用フォルダを決める。
- * 空でない値を入れると、SDカードのpreset.txtより優先してこちらの名前の
+ * 空文字列""ならこれまで通りNVSのデバッグ選択プリセット→SDカード上の
+ * /sdcard/preset.txt (無ければDEFAULT_PRESET_NAME)の順で使用フォルダを
+ * 決める。空でない値を入れると、それら全てより優先してこちらの名前の
  * フォルダ(/sdcard/sounds/<この名前>/)を使う。SDカードを抜き差しせず、
  * ここを書き換えて `idf.py build && idf.py flash` するだけでパターンを
  * 切り替えられる。
+ * 【重要】これを空でない値にすると、起動時ボタン長押しのデバッグ選択画面
+ * (main/debug_preset.h)で何を選んでも常にこちらが使われてしまう。
+ * デバッグ選択画面で選んだ結果を実際に反映させたい場合は必ず""に戻すこと。
  * 例: #define SOUND_PRESET_OVERRIDE "16E" */
-#define SOUND_PRESET_OVERRIDE "03"
+#define SOUND_PRESET_OVERRIDE ""
 
 /* 再生を「即座に打ち切れる」ようにするためのチャンクサイズ(ms単位)。
  * write()をこの単位に分割し、1チャンク書き終えるたびに新しい再生要求が
@@ -83,9 +87,9 @@ typedef struct {
 } sound_slot_t;
 
 static const char *const k_sound_filenames[UI_SOUND_DONE + 1] = {
-    [UI_SOUND_BUTTON]  = "button.wav",
+    [UI_SOUND_HIT]     = "hit.wav",
+    [UI_SOUND_PROCEED] = "proceed.wav",
     [UI_SOUND_MOVE]    = "move.wav",
-    [UI_SOUND_CONFIRM] = "confirm.wav",
     [UI_SOUND_BACK]    = "back.wav",
     [UI_SOUND_DONE]    = "done.wav",
 };
@@ -218,12 +222,20 @@ static uint8_t *read_file_into_buffer(const char *path, size_t *out_len)
 /* preset.txt の1行目からプリセット名を決める。
  * 無い/読み取れない場合はDEFAULT_PRESET_NAMEを使う。
  * (旧sound_preset.txtは名前部分が12文字で8.3制限を超えていたためpreset.txtに短縮した)
- * ただしSOUND_PRESET_OVERRIDEが空でなければ、SDカードを見ずにそちらを優先する。 */
+ * 優先順位: (1) SOUND_PRESET_OVERRIDE(コンパイル時の開発用スイッチ、空でなければ
+ * 常に最優先) > (2) NVSに保存されたデバッグ選択プリセット(起動時ボタン長押しの
+ * デバッグ選択画面で選んだもの。詳細はmain/debug_preset.h参照) > (3) SDカードの
+ * preset.txt > (4) DEFAULT_PRESET_NAME。 */
 static void resolve_preset_dir(char *out, size_t out_size)
 {
     if (SOUND_PRESET_OVERRIDE[0] != '\0') {
         snprintf(out, out_size, "%s", SOUND_PRESET_OVERRIDE);
         ESP_LOGI(TAG, "SOUND_PRESET_OVERRIDE=\"%s\" が指定されているため、SDカードのpreset.txtより優先してこちらを使用します", out);
+        return;
+    }
+
+    if (debug_preset_get(out, out_size) == ESP_OK && out[0] != '\0') {
+        ESP_LOGI(TAG, "NVSのデバッグ選択プリセット \"%s\" を使用します", out);
         return;
     }
 

@@ -86,3 +86,57 @@ void ui_screens_sync_selection(void)
 {
     lv_roller_set_selected(s_roller, nav_get_selected_index(), LV_ANIM_ON);
 }
+
+/* ---- デバッグ用プリセット選択画面 ----
+ * 通常のnav階層(menu_nav.c)とは無関係な、独立した2つ目の画面/ラベル/ローラー
+ * を使う。通常起動では一度も使われないため、ここで初めて(遅延)生成する。 */
+
+static lv_obj_t *s_debug_screen;
+static lv_obj_t *s_debug_title_label;
+static lv_obj_t *s_debug_roller;
+
+static void ensure_debug_picker_created(void)
+{
+    if (s_debug_screen != NULL) {
+        return;
+    }
+
+    s_debug_screen = lv_obj_create(NULL);
+    lv_obj_set_style_bg_color(s_debug_screen, lv_color_hex(0x101010), 0);
+    lv_obj_set_style_text_font(s_debug_screen, &font_ja_menu_14, 0);
+
+    s_debug_title_label = lv_label_create(s_debug_screen);
+    lv_obj_set_style_text_color(s_debug_title_label, lv_color_hex(0xffffff), 0);
+    lv_obj_align(s_debug_title_label, LV_ALIGN_TOP_MID, 0, 10);
+    lv_label_set_text(s_debug_title_label, "デバッグ: プリセット選択");
+
+    s_debug_roller = lv_roller_create(s_debug_screen);
+    lv_roller_set_visible_row_count(s_debug_roller, 4);
+    lv_obj_set_width(s_debug_roller, 260);
+    lv_obj_align(s_debug_roller, LV_ALIGN_CENTER, 0, 10);
+    lv_obj_clear_flag(s_debug_roller, LV_OBJ_FLAG_CLICKABLE);
+}
+
+void ui_screens_show_debug_picker(const char *const *names, size_t count)
+{
+    ensure_debug_picker_created();
+
+    char options_buf[1024];
+    options_buf[0] = '\0';
+    for (size_t i = 0; i < count; i++) {
+        strncat(options_buf, names[i], sizeof(options_buf) - strlen(options_buf) - 1);
+        if (i + 1 < count) {
+            strncat(options_buf, "\n", sizeof(options_buf) - strlen(options_buf) - 1);
+        }
+    }
+
+    lv_roller_set_options(s_debug_roller, options_buf, LV_ROLLER_MODE_NORMAL);
+    lv_roller_set_selected(s_debug_roller, 0, LV_ANIM_OFF);
+
+    lv_scr_load(s_debug_screen);
+}
+
+void ui_screens_debug_picker_set_selected(int index)
+{
+    lv_roller_set_selected(s_debug_roller, index, LV_ANIM_ON);
+}

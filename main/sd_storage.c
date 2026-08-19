@@ -3,6 +3,9 @@
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include <dirent.h>
+#include <string.h>
+#include <stdio.h>
 
 static const char *TAG = "sd_storage";
 static bool s_mounted;
@@ -82,4 +85,47 @@ bool sd_storage_is_mounted(void)
 const char *sd_storage_mount_point(void)
 {
     return CONFIG_BSP_SD_MOUNT_POINT;
+}
+
+size_t sd_storage_list_preset_dirs(char names[][SD_STORAGE_PRESET_NAME_MAX], size_t max_count)
+{
+    if (!s_mounted) {
+        ESP_LOGW(TAG, "sd_storage_list_preset_dirs: SDカードがマウントされていません");
+        return 0;
+    }
+
+    char sounds_dir[64];
+    snprintf(sounds_dir, sizeof(sounds_dir), "%s/sounds", sd_storage_mount_point());
+
+    DIR *dir = opendir(sounds_dir);
+    if (!dir) {
+        ESP_LOGW(TAG, "opendir(%s) failed", sounds_dir);
+        return 0;
+    }
+
+    size_t count = 0;
+    struct dirent *entry;
+    while (count < max_count && (entry = readdir(dir)) != NULL) {
+        if (strcmp(entry->d_name, ".") == 0 || strcmp(entry->d_name, "..") == 0) {
+            continue;
+        }
+        if (entry->d_type != DT_DIR) {
+            continue;
+        }
+        /* readdir()が返した文字列をそのまま(大文字/小文字を加工せず)コピーする。
+         * fopen()側の8.3短名解決は大文字小文字を区別しないため、表示に使った
+         * 文字列をそのままプリセット名として使い回せる。
+         * (d_nameはSD_STORAGE_PRESET_NAME_MAXより大きいバッファとして宣言
+         * されているため、snprintf("%s", ...)だと-Werror=format-truncation
+         * に引っかかる。strnlen+memcpyで明示的に切り詰める) */
+        size_t name_len = strnlen(entry->d_name, SD_STORAGE_PRESET_NAME_MAX - 1);
+        memcpy(names[count], entry->d_name, name_len);
+        names[count][name_len] = '\0';
+        count++;
+    }
+    closedir(dir);
+
+    ESP_LOGI(TAG, "sd_storage_list_preset_dirs: %s 配下に%u件のプリセットフォルダを検出",
+             sounds_dir, (unsigned)count);
+    return count;
 }

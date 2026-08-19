@@ -20,6 +20,17 @@ void ui_screens_refresh(void);
  * ローラーの表示位置だけをアニメーション付きで更新する(選択肢の再構築はしない) */
 void ui_screens_sync_selection(void);
 
+/* デバッグ用プリセット選択画面(起動時ボタン長押しで入る、通常のnav階層とは
+ * 無関係な独立画面)を表示する。namesはcount個の文字列配列で、この呼び出し中に
+ * ローラーへコピーされるため、呼び出し後にnames自体は解放してよい。
+ * 初回呼び出し時に画面/ラベル/ローラーを生成する(通常起動では一度も使われない
+ * ため、ui_screens_init()では事前生成しない)。 */
+void ui_screens_show_debug_picker(const char *const *names, size_t count);
+
+/* デバッグ選択画面のローラー選択位置だけを更新する(ui_screens_sync_selection()の
+ * デバッグ画面版)。 */
+void ui_screens_debug_picker_set_selected(int index);
+
 #ifdef __cplusplus
 }
 #endif

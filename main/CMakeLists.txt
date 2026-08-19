@@ -7,6 +7,7 @@ idf_component_register(
         "encoder_unit.c"
         "sound_hooks.c"
         "sd_storage.c"
+        "debug_preset.c"
         "fonts/font_ja_menu_14.c"
     INCLUDE_DIRS "."
     REQUIRES
@@ -17,6 +18,7 @@ idf_component_register(
         esp_lvgl_port      # bsp_display_lock() / bsp_display_unlock()
         lvgl               # lv_* 一式
         esp_codec_dev      # esp_codec_dev_open/write/close/set_out_vol
+        nvs_flash          # デバッグ用プリセット選択の保存(debug_preset.c)
 )
 
 # 【変更点】UI音声はSDカード(/sdcard/sounds/...)から読み込む方式に変更したため、
