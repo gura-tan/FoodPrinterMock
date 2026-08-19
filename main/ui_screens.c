@@ -54,12 +54,15 @@ static void build_roller_options_string(char *buf, size_t buf_size)
  * パラメーター.png参照)。円の見た目:
  *   - パラメータの円: 背景(LV_PART_MAIN)は非表示にし、インジケータ
  *     (LV_PART_INDICATOR)だけを12時ちょうどから表示 → 値が増えるほど
- *     時計回りにリングが伸び、maxで隙間なく1周する(bg_angle_endに
- *     start+360を明示的に渡すと、lv_arc内部のラップアラウンド判定
- *     (end<startのときだけ+360する)を素通りしてそのまま360°分の
- *     スイープ幅として使われる。デフォルトの(135,45)も内部的には
- *     135→405に補正されて使われており、この仕組み自体はライブラリの
- *     標準動作)
+ *     時計回りにリングが伸びる。
+ *     【要注意】lv_arc_set_bg_end_angle()は受け取った角度が360を超えると
+ *     その場で-360する(`if (end > 360) end -= 360;`)ため、
+ *     start+360(=630)をそのまま渡しても270に丸められてstartと一致し、
+ *     スイープ幅が0になってリングが常に非表示になる(実際に一度これで
+ *     ハマった)。正しくは終了角にstartより1度小さい値を渡すこと。
+ *     lv_arc内部はend<startのときだけ+360する別のラップアラウンド処理を
+ *     value_update()側で持っているため、これで359°(実質1周)のスイープ
+ *     幅になる(1度分の隙間は半径44px程度の円では1px未満で視認できない)。
  *   - START の円: 常に満円のリング(値の概念を持たない仮想ステップ)
  * 塩味だけは数値の代わりにアイコン(icon_salt, main/icons/参照)を中央に置く。
  * アイコンはA8(アルファのみ)フォーマットなのでimage_recolorスタイルの色が
@@ -74,7 +77,7 @@ static void build_roller_options_string(char *buf, size_t buf_size)
 #define GAUGE_ARC_WIDTH         8
 #define GAUGE_Y_OFFSET         14   // タイトルの下に少し余裕を持たせる
 #define GAUGE_ANGLE_BG_START  270   // 12時ちょうど(0deg=3時, 90deg=6時, 180deg=9時, 270deg=12時)
-#define GAUGE_ANGLE_BG_END    (GAUGE_ANGLE_BG_START + 360) // 隙間なく時計回りに1周させる
+#define GAUGE_ANGLE_BG_END    (GAUGE_ANGLE_BG_START - 1) // 359°スイープ(実質1周、コメント参照)
 #define GAUGE_COLOR_ACTIVE  0x3399ff  // 操作中の円のアクセントカラー(スケッチのSTARTの青)
 #define GAUGE_COLOR_INACTIVE 0x606060 // 操作対象外の円のグレー
 
