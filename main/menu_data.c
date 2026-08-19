@@ -1,10 +1,13 @@
 #include "menu_data.h"
 
-/* ---- 共有パラメータセット (デモ用: 味調整3項目) ---- */
+/* ---- 共有パラメータセット (デモ用: 量+塩味の2項目) ----
+ * パラメータ調整画面(3つの円: 量→塩味→START)に合わせて2項目に絞っている。
+ * 以前は「焼き加減」も含む3項目だったが、円のレイアウトをスケッチ
+ * (main/../デザインスケッチ-パラメーター.png 相当)に合わせるため削除した。
+ * 実データが決まったらここを差し替える。 */
 static const parameter_def_t k_params_taste[] = {
-    { .name = "焼き加減", .unit = "%", .min_value = 0,   .max_value = 100, .default_value = 50  },
-    { .name = "塩味",     .unit = "",  .min_value = 0,   .max_value = 10,  .default_value = 5   },
-    { .name = "量",       .unit = "g", .min_value = 100, .max_value = 500, .default_value = 200 },
+    { .name = "量",   .unit = "g", .min_value = 100, .max_value = 500, .default_value = 200 },
+    { .name = "塩味", .unit = "",  .min_value = 0,   .max_value = 10,  .default_value = 5   },
 };
 #define TASTE_PARAM_COUNT (sizeof(k_params_taste) / sizeof(k_params_taste[0]))
 

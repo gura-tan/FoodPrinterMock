@@ -68,6 +68,14 @@ static void refresh_options(void)
     }
     case NAV_LEVEL_PARAM: {
         const menu_item_def_t *menu = current_menu_item();
+        if (s_state.parameter_index >= (int)menu->parameter_count) {
+            /* START(仮想ステップ): 選べる値は無いので、ダイヤルを回しても
+             * 何も起きないよう選択肢を1件だけにしておく */
+            snprintf(s_option_text[0], OPTION_STR_LEN, "START");
+            s_option_ptr[0] = s_option_text[0];
+            s_option_count = 1;
+            break;
+        }
         const parameter_def_t *p = &menu->parameters[s_state.parameter_index];
         int32_t step = param_step(p);
         size_t count = 0;
@@ -161,6 +169,11 @@ bool nav_confirm(void)
     }
     case NAV_LEVEL_PARAM: {
         const menu_item_def_t *menu = current_menu_item();
+        if (s_state.parameter_index >= (int)menu->parameter_count) {
+            /* STARTを確定 = 一連の操作フロー完了。値は持たないので何も保存しない */
+            return true;
+        }
+
         const parameter_def_t *p = &menu->parameters[s_state.parameter_index];
         int32_t value = p->min_value + (int32_t)s_current_selection * param_step(p);
         if (value > p->max_value) value = p->max_value;
@@ -168,11 +181,8 @@ bool nav_confirm(void)
             s_param_values[s_state.parameter_index] = value;
         }
 
-        s_state.parameter_index++;
+        s_state.parameter_index++; // 次のパラメータ、またはSTART(parameter_index==parameter_count)へ
         s_dirty = true;
-        if (s_state.parameter_index >= (int)menu->parameter_count) {
-            return true; // 全パラメータ確定 = 一連の操作フロー完了
-        }
         return false;
     }
     }
@@ -208,6 +218,31 @@ int32_t nav_get_confirmed_param_value(int index)
 {
     if (index < 0 || index >= MAX_PARAMS_PER_MENU) {
         return 0;
+    }
+    return s_param_values[index];
+}
+
+const menu_item_def_t *nav_get_current_menu_item(void)
+{
+    return current_menu_item();
+}
+
+int32_t nav_get_param_live_value(int index)
+{
+    if (index < 0 || index >= MAX_PARAMS_PER_MENU) {
+        return 0;
+    }
+    if (s_state.level == NAV_LEVEL_PARAM && index == s_state.parameter_index) {
+        if (s_dirty) {
+            refresh_options();
+        }
+        const menu_item_def_t *menu = current_menu_item();
+        if (index < (int)menu->parameter_count) {
+            const parameter_def_t *p = &menu->parameters[index];
+            int32_t value = p->min_value + (int32_t)s_current_selection * param_step(p);
+            if (value > p->max_value) value = p->max_value;
+            return value;
+        }
     }
     return s_param_values[index];
 }

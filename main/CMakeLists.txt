@@ -9,6 +9,7 @@ idf_component_register(
         "sd_storage.c"
         "debug_preset.c"
         "fonts/font_ja_menu_14.c"
+        "icons/icon_salt.c"
     INCLUDE_DIRS "."
     REQUIRES
         # managed_components/ 配下の実フォルダ名(espressif__m5stack_core_s3 等)から

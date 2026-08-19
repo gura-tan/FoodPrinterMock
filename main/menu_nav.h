@@ -13,17 +13,20 @@ extern "C" {
  * 「現在の階層 + 選択パス」を1つの状態(スタック相当)として保持し、
  * 決定操作で1階層深く進み、キャンセル操作で1階層戻る。
  *
- * パラメータ調整画面(NAV_LEVEL_PARAM)も、選択画面と全く同じ
- * 「文字列の配列から1つ選ぶ」というインターフェースに統一している
- * (min〜maxの値を文字列化した選択肢をローラーに並べるだけ)。
- * これにより画面側は4階層すべてを同じ1つのテンプレートで描画できる。
- */
+ * 大カテゴリ/小カテゴリ/メニュー選択は「文字列の配列から1つ選ぶ」
+ * インターフェースに統一しており、画面側は同じテンプレート(ui_screens.c)で
+ * 描画できる(nav_get_current_options()参照)。
+ *
+ * パラメータ調整(NAV_LEVEL_PARAM)だけは専用の円ゲージ画面を持つため別扱い。
+ * parameter_indexは 0..parameter_count-1 が各パラメータ(ダイヤルで値を調整)、
+ * parameter_count(=最後の次のインデックス)は「START」を表す仮想ステップで、
+ * 値を持たず決定操作だけを受け付ける(nav_confirm()参照)。 */
 
 typedef enum {
     NAV_LEVEL_MAJOR = 0,   // 大カテゴリ選択
     NAV_LEVEL_SUB,         // 小カテゴリ選択
     NAV_LEVEL_MENU,        // メニュー選択
-    NAV_LEVEL_PARAM,       // パラメータ調整 (parameter_index で1画面/1パラメータ)
+    NAV_LEVEL_PARAM,       // パラメータ調整 (parameter_index で1画面/1パラメータ、末尾はSTART)
 } nav_level_t;
 
 typedef struct {
@@ -58,6 +61,17 @@ void nav_back(void);
 
 /* NAV_LEVEL_PARAMで確定済みのパラメータ値を取得する(index=parameter_index) */
 int32_t nav_get_confirmed_param_value(int index);
+
+/* 現在選択中のメニュー項目(パラメータ定義配列の元)を返す。NAV_LEVEL_PARAM画面が
+ * 各パラメータの名前/単位/min/maxを読むために使う。他階層で呼んでも安全だが
+ * 意味を持つのはNAV_LEVEL_PARAMのときだけ。 */
+const menu_item_def_t *nav_get_current_menu_item(void);
+
+/* NAV_LEVEL_PARAMで、まだ確定していない「今ダイヤルで選んでいる値」込みの
+ * 表示用の値を返す: index==parameter_index(操作中)ならダイヤルの現在位置から
+ * 計算し、それ以外(確定済み/未到達)はnav_get_confirmed_param_value()と同じ値
+ * (未到達なら0)を返す。円ゲージ画面がダイヤル操作に追従して値を表示するために使う。 */
+int32_t nav_get_param_live_value(int index);
 
 #ifdef __cplusplus
 }
