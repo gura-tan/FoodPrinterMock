@@ -30,7 +30,7 @@ static const char *TAG = "app_main";
  * わずかな回転として拾われることがある(機構的なガタ)。ボタンの状態が
  * 変化した直後 BUTTON_JITTER_GUARD_MS の間は回転差分の適用を止めることで、
  * 「長押し中/離した直後に意図せず選択が動く」現象を抑える。 */
-#define BUTTON_JITTER_GUARD_MS  150
+#define BUTTON_JITTER_GUARD_MS  50
 
 /* 【デバッグ用プリセット選択】起動直後(ディスプレイ開始前)にボタンが
  * 押されているかどうかを判定するためのサンプリング設定。コールド起動直後の
