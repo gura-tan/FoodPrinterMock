@@ -21,6 +21,11 @@ void ui_screens_refresh(void);
  * ローラーの表示位置だけをアニメーション付きで更新する(選択肢の再構築はしない) */
 void ui_screens_sync_selection(void);
 
+/* ui_screens_refresh()が起こす画面遷移(ワイプ)アニメーションの最中はtrue。
+ * 呼び出し側(app_main.c)はこの間、入力ポーリングを丸ごとスキップして
+ * ボタン/エンコーダー操作を受け付けないようにする。 */
+bool ui_screens_transition_in_progress(void);
+
 /* デバッグ用プリセット選択画面(起動時ボタン長押しで入る、通常のnav階層とは
  * 無関係な独立画面)を表示する。namesはcount個の文字列配列で、この呼び出し中に
  * ローラーへコピーされるため、呼び出し後にnames自体は解放してよい。

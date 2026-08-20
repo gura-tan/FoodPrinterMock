@@ -218,6 +218,86 @@ static void show_param_gauges(void)
     lv_scr_load(s_param_screen);
 }
 
+/* ---- 画面遷移(ワイプ)アニメーション ----
+ * 決定/戻る操作でui_screens_refresh()が呼ばれるたびに、中央の帯が上下に
+ * 伸びて画面全体を覆う→隠れている間に中身を差し替える→帯が縮んで新しい
+ * 画面が現れる、という演出を挟む(カテゴリ選択画面のデザインスケッチ参照)。
+ * lv_layer_top()に載せることで、内部でs_screen/s_param_screenのどちらに
+ * 切り替わっても常に最前面に描画される。
+ * トランジション中はapp_main.c側がui_screens_transition_in_progress()を
+ * 見て入力ポーリングを丸ごとスキップするため、「操作を中断された」感覚に
+ * ならない程度の短さ(片道90ms、往復180ms)に抑えてある。 */
+#define TRANSITION_SCREEN_W_PX 320   // BSP_LCD_H_RES(GAUGE_SCREEN_Wと同じ理由でハードコード)
+#define TRANSITION_SCREEN_H_PX 240   // BSP_LCD_V_RES
+#define TRANSITION_COVER_MS     90
+#define TRANSITION_REVEAL_MS    90
+#define TRANSITION_COLOR   0x3399ff  // GAUGE_COLOR_ACTIVEと同系色(スケッチの青帯)
+
+static lv_obj_t *s_transition_overlay;
+static bool      s_transition_active;
+
+static void apply_refresh(void)
+{
+    if (nav_get_state()->level == NAV_LEVEL_PARAM) {
+        show_param_gauges();
+        return;
+    }
+
+    char options_buf[1024];
+    build_roller_options_string(options_buf, sizeof(options_buf));
+
+    lv_roller_set_options(s_roller, options_buf, LV_ROLLER_MODE_NORMAL);
+    lv_roller_set_selected(s_roller, nav_get_selected_index(), LV_ANIM_OFF);
+
+    lv_label_set_text(s_title_label, level_title(nav_get_state()->level));
+    lv_scr_load(s_screen);
+}
+
+static void transition_reveal_completed_cb(lv_anim_t *a)
+{
+    (void)a;
+    lv_obj_add_flag(s_transition_overlay, LV_OBJ_FLAG_HIDDEN);
+    s_transition_active = false;
+}
+
+static void transition_cover_completed_cb(lv_anim_t *a)
+{
+    (void)a;
+    apply_refresh(); // 帯で隠れている間に中身を差し替える
+
+    lv_anim_t reveal;
+    lv_anim_init(&reveal);
+    lv_anim_set_var(&reveal, s_transition_overlay);
+    lv_anim_set_exec_cb(&reveal, (lv_anim_exec_xcb_t)lv_obj_set_height);
+    lv_anim_set_values(&reveal, TRANSITION_SCREEN_H_PX, 0);
+    lv_anim_set_duration(&reveal, TRANSITION_REVEAL_MS);
+    lv_anim_set_path_cb(&reveal, lv_anim_path_ease_out);
+    lv_anim_set_completed_cb(&reveal, transition_reveal_completed_cb);
+    lv_anim_start(&reveal);
+}
+
+static void start_transition(void)
+{
+    s_transition_active = true;
+    lv_obj_clear_flag(s_transition_overlay, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_set_height(s_transition_overlay, 0);
+
+    lv_anim_t cover;
+    lv_anim_init(&cover);
+    lv_anim_set_var(&cover, s_transition_overlay);
+    lv_anim_set_exec_cb(&cover, (lv_anim_exec_xcb_t)lv_obj_set_height);
+    lv_anim_set_values(&cover, 0, TRANSITION_SCREEN_H_PX);
+    lv_anim_set_duration(&cover, TRANSITION_COVER_MS);
+    lv_anim_set_path_cb(&cover, lv_anim_path_ease_in);
+    lv_anim_set_completed_cb(&cover, transition_cover_completed_cb);
+    lv_anim_start(&cover);
+}
+
+bool ui_screens_transition_in_progress(void)
+{
+    return s_transition_active;
+}
+
 void ui_screens_init(void)
 {
     s_screen = lv_obj_create(NULL);
@@ -249,26 +329,26 @@ void ui_screens_init(void)
     lv_obj_set_style_bg_color(s_param_screen, lv_color_hex(0x101010), 0);
     lv_obj_set_style_text_font(s_param_screen, &font_ja_menu_14, 0);
 
+    /* ワイプ演出用の帯。lv_layer_top()配下なのでs_screen/s_param_screenの
+     * どちらが表示中でも常に最前面に来る。remove_style_all()でデフォルト
+     * テーマの余白/枠/角丸を消し、単色の帯として振る舞わせる。 */
+    s_transition_overlay = lv_obj_create(lv_layer_top());
+    lv_obj_remove_style_all(s_transition_overlay);
+    lv_obj_set_size(s_transition_overlay, TRANSITION_SCREEN_W_PX, 0);
+    lv_obj_align(s_transition_overlay, LV_ALIGN_CENTER, 0, 0);
+    lv_obj_set_style_bg_color(s_transition_overlay, lv_color_hex(TRANSITION_COLOR), 0);
+    lv_obj_set_style_bg_opa(s_transition_overlay, LV_OPA_COVER, 0);
+    lv_obj_clear_flag(s_transition_overlay, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_add_flag(s_transition_overlay, LV_OBJ_FLAG_HIDDEN);
+
     lv_scr_load(s_screen); /* v9系では lv_screen_load() に読み替え可 */
 
-    ui_screens_refresh();
+    apply_refresh(); // 起動直後の初回表示はワイプ演出無しで即時反映する
 }
 
 void ui_screens_refresh(void)
 {
-    if (nav_get_state()->level == NAV_LEVEL_PARAM) {
-        show_param_gauges();
-        return;
-    }
-
-    char options_buf[1024];
-    build_roller_options_string(options_buf, sizeof(options_buf));
-
-    lv_roller_set_options(s_roller, options_buf, LV_ROLLER_MODE_NORMAL);
-    lv_roller_set_selected(s_roller, nav_get_selected_index(), LV_ANIM_OFF);
-
-    lv_label_set_text(s_title_label, level_title(nav_get_state()->level));
-    lv_scr_load(s_screen);
+    start_transition();
 }
 
 void ui_screens_sync_selection(void)

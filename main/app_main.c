@@ -281,6 +281,15 @@ void app_main(void)
     bool back_triggered_this_press = false;
 
     while (1) {
+        if (ui_screens_transition_in_progress()) {
+            /* 画面遷移のワイプ演出中は入力を一切受け付けない。演出は
+             * 片道90msと短いため、この間だけencoder_poll()自体を
+             * 呼ばずにスキップしても押しっぱなし長押し(CANCEL_HOLD_MS)の
+             * 判定には影響しない(press_started_tickは実時間基準のまま)。 */
+            vTaskDelay(pdMS_TO_TICKS(POLL_INTERVAL_MS));
+            continue;
+        }
+
         int32_t delta = 0;
         bool button_pressed = false;
         esp_err_t err = encoder_poll(&delta, &button_pressed);
