@@ -1,0 +1,5 @@
+{
+  "buildCommand": "bash sim/vercel-build.sh",
+  "outputDirectory": "sim/build",
+  "installCommand": "echo 'no install step needed'"
+}
