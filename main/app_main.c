@@ -32,6 +32,18 @@ static const char *TAG = "app_main";
  * 「長押し中/離した直後に意図せず選択が動く」現象を抑える。 */
 #define BUTTON_JITTER_GUARD_MS  50
 
+/* 押しボタンの接点バウンス対策。ボタンの押下/解放そのもの(I2Cレジスタの
+ * 生値)にはデバウンス処理が無いため、離した瞬間に接点が跳ねて一瞬だけ
+ * 「また押された」と読めることがある。これをそのまま新しい押下エッジとして
+ * 扱うとUI_SOUND_HITが再発火し、再生中のPROCEED/DONEのテールを打ち切って
+ * しまう。直前に確定したボタンエッジからBUTTON_DEBOUNCE_MS未満で読めた
+ * 逆方向の値は無視し、直前の確定状態を維持する。
+ * BUTTON_JITTER_GUARD_MS(回転量の適用を止める猶予)とは別物: こちらは
+ * ボタンの押下/解放の判定そのものを安定させるためのもので、実際の押下・
+ * 解放動作(数十〜数百ms)より十分短く、接点バウンス(数〜十数ms)より
+ * 十分長い値にしている。 */
+#define BUTTON_DEBOUNCE_MS  30
+
 /* 【デバッグ用プリセット選択】起動直後(ディスプレイ開始前)にボタンが
  * 押されているかどうかを判定するためのサンプリング設定。コールド起動直後の
  * I2Cバス安定待ちノイズやエンコーダーの機械的ガタによる誤検出を避けるため、
@@ -279,15 +291,17 @@ void app_main(void)
                 have_button_edge &&
                 ((now - last_button_edge_tick) * portTICK_PERIOD_MS < BUTTON_JITTER_GUARD_MS);
 
+            /* 直前に確定したボタンエッジからBUTTON_DEBOUNCE_MS未満しか
+             * 経っていない場合、生の読み値が逆転していても接点バウンスと
+             * みなして無視し、直前の確定状態(button_was_pressed)を使う。 */
+            bool within_button_debounce =
+                have_button_edge &&
+                ((now - last_button_edge_tick) * portTICK_PERIOD_MS < BUTTON_DEBOUNCE_MS);
+            bool debounced_button_pressed = within_button_debounce ? button_was_pressed : button_pressed;
+
             if (delta != 0 && !within_jitter_guard) {
                 nav_move_selection(delta);
-                /* 即時割り込み版ではなくchained版を使う: ジッターガードの
-                 * 猶予(BUTTON_JITTER_GUARD_MS)を過ぎてから来た回転量は、
-                 * ボタン操作に起因する機構的なガタの可能性がまだ残っている。
-                 * MOVE音がPROCEED/DONEなど直前の音(特にリバーブテール)を
-                 * 打ち切ってしまわないよう、現在の再生が自然に終わるのを
-                 * 待ってから鳴らす。 */
-                sound_hooks_play_chained(UI_SOUND_MOVE);
+                sound_hooks_play_move();
                 bsp_display_lock(0);
                 ui_screens_sync_selection();
                 bsp_display_unlock();
@@ -295,14 +309,14 @@ void app_main(void)
                 ESP_LOGD(TAG, "ignoring delta=%ld near a button edge (jitter guard)", (long)delta);
             }
 
-            if (button_pressed && !button_was_pressed) {
+            if (debounced_button_pressed && !button_was_pressed) {
                 /* 押し始め: 画面遷移とは独立して、まず音だけ鳴らす */
                 sound_hooks_play(UI_SOUND_HIT);
                 press_started_tick = now;
                 last_button_edge_tick = press_started_tick;
                 have_button_edge = true;
                 back_triggered_this_press = false;
-            } else if (button_pressed && button_was_pressed && !back_triggered_this_press) {
+            } else if (debounced_button_pressed && button_was_pressed && !back_triggered_this_press) {
                 /* 押され続けている間: 長押し時間(CANCEL_HOLD_MS)に達した瞬間、
                  * 離す操作を待たずにBACKを確定させる */
                 TickType_t held_ms = (now - press_started_tick) * portTICK_PERIOD_MS;
@@ -314,7 +328,7 @@ void app_main(void)
                     ui_screens_refresh();
                     bsp_display_unlock();
                 }
-            } else if (!button_pressed && button_was_pressed) {
+            } else if (!debounced_button_pressed && button_was_pressed) {
                 last_button_edge_tick = now;
                 have_button_edge = true;
 
@@ -337,7 +351,7 @@ void app_main(void)
                     bsp_display_unlock();
                 }
             }
-            button_was_pressed = button_pressed;
+            button_was_pressed = debounced_button_pressed;
         } else {
             ESP_LOGW(TAG, "encoder_poll failed: %s", esp_err_to_name(err));
         }
