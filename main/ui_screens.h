@@ -14,8 +14,11 @@ extern "C" {
 void ui_screens_init(void);
 
 /* nav側の階層/選択パスが変わった(決定/戻る操作をした)直後に呼ぶ:
- * タイトルとローラーの選択肢を丸ごと再構築する */
-void ui_screens_refresh(void);
+ * タイトルとローラーの選択肢を丸ごと再構築する。
+ * is_back: 戻る操作(nav_back())の直後ならtrue、決定操作(nav_confirm())の
+ * 直後ならfalseを渡す。ワイプ演出が出る場合、trueだと右→左、falseだと
+ * 左→右に動く(戻る/進むで向きを逆にする)。 */
+void ui_screens_refresh(bool is_back);
 
 /* エンコーダー回転でnav_move_selection()を呼んだ直後に呼ぶ:
  * ローラーの表示位置だけをアニメーション付きで更新する(選択肢の再構築はしない) */

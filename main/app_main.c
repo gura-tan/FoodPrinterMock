@@ -337,7 +337,7 @@ void app_main(void)
                     sound_hooks_play(UI_SOUND_BACK);
                     back_triggered_this_press = true;
                     bsp_display_lock(0);
-                    ui_screens_refresh();
+                    ui_screens_refresh(true); // 戻る操作: ワイプは右→左
                     bsp_display_unlock();
                 }
             } else if (!debounced_button_pressed && button_was_pressed) {
@@ -359,7 +359,7 @@ void app_main(void)
                         nav_init();
                     }
                     bsp_display_lock(0);
-                    ui_screens_refresh();
+                    ui_screens_refresh(false); // 決定操作: ワイプは左→右
                     bsp_display_unlock();
                 }
             }

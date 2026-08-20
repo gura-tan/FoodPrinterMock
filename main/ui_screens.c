@@ -255,6 +255,7 @@ static void show_param_gauges(void)
 static lv_obj_t    *s_transition_mask;  // rollerと同じ位置/サイズ/角丸のクリッピング用コンテナ(自身は透明)
 static lv_obj_t    *s_transition_band;  // maskの子。角丸無しの単色矩形で、これの幅を動かす
 static bool         s_transition_active;
+static bool         s_transition_reverse; // true: 戻る操作(右→左)、false: 決定操作(左→右)
 static nav_level_t  s_last_shown_level; // 直前にapply_refresh()で実際に表示した階層
 
 static void apply_refresh(void)
@@ -286,11 +287,15 @@ static void transition_cover_completed_cb(lv_anim_t *a)
     (void)a;
     apply_refresh(); // 帯で隠れている間に中身を差し替える
 
-    /* 幅はcover完了時点でmaskの全幅と一致しているので、位置合わせを
-     * LEFT_MID→RIGHT_MIDへ切り替えても見た目はジャンプしない(どちらの
-     * 基準でも「幅=maskの全幅」のときの座標は同じになるため)。以後は
-     * 右端を固定したまま幅を縮めることで、左端(=境界線)だけが右へ動く。 */
-    lv_obj_align(s_transition_band, LV_ALIGN_RIGHT_MID, 0, 0);
+    /* 幅はcover完了時点でmaskの全幅と一致しているので、位置合わせの基準を
+     * 切り替えても見た目はジャンプしない(どちらの基準でも「幅=maskの
+     * 全幅」のときの座標は同じになるため)。以後は片方の端を固定したまま
+     * 幅を縮めることで、もう片方の端(=境界線)だけが動く。
+     * 通常(左→右): coverはLEFT_MID固定で伸ばした→revealはRIGHT_MID固定で
+     * 縮め、境界線(左端)が左→右に動く。
+     * 戻る(右→左): coverはRIGHT_MID固定で伸ばした→revealはLEFT_MID固定で
+     * 縮め、境界線(右端)が右→左に動く(完全に鏡写しの動き)。 */
+    lv_obj_align(s_transition_band, s_transition_reverse ? LV_ALIGN_LEFT_MID : LV_ALIGN_RIGHT_MID, 0, 0);
 
     lv_anim_t reveal;
     lv_anim_init(&reveal);
@@ -304,9 +309,10 @@ static void transition_cover_completed_cb(lv_anim_t *a)
     lv_anim_start(&reveal);
 }
 
-static void start_transition(void)
+static void start_transition(bool reverse)
 {
     s_transition_active = true;
+    s_transition_reverse = reverse;
 
     /* rollerの現在の位置/サイズ/角丸に毎回揃え直す(rollerは3階層とも
      * 同じ大きさで使い回しているので通常は変わらないが、念のため)。
@@ -319,7 +325,9 @@ static void start_transition(void)
 
     lv_obj_clear_flag(s_transition_mask, LV_OBJ_FLAG_HIDDEN);
     lv_obj_set_height(s_transition_band, lv_obj_get_height(s_transition_mask));
-    lv_obj_align(s_transition_band, LV_ALIGN_LEFT_MID, 0, 0); // 左端固定、右端(=境界線)が右へ動く
+    /* 通常(左→右)はLEFT_MID固定で右端(=境界線)を右へ、戻る(右→左)は
+     * RIGHT_MID固定で左端(=境界線)を左へ動かす。 */
+    lv_obj_align(s_transition_band, reverse ? LV_ALIGN_RIGHT_MID : LV_ALIGN_LEFT_MID, 0, 0);
     lv_obj_set_width(s_transition_band, 0);
 
     lv_anim_t cover;
@@ -393,7 +401,7 @@ void ui_screens_init(void)
     apply_refresh(); // 起動直後の初回表示はワイプ演出無しで即時反映する
 }
 
-void ui_screens_refresh(void)
+void ui_screens_refresh(bool is_back)
 {
     /* ワイプ演出はrollerの白い枠を覆う/はがす動きなので、直前に表示して
      * いた画面(遷移元)がカテゴリ選択(roller)画面のときだけ行う。パラメータ
@@ -405,7 +413,7 @@ void ui_screens_refresh(void)
         apply_refresh();
         return;
     }
-    start_transition();
+    start_transition(is_back); // 戻る操作は右→左、決定操作は左→右
 }
 
 void ui_screens_sync_selection(void)
