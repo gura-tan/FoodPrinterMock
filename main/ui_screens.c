@@ -220,17 +220,20 @@ static void show_param_gauges(void)
 
 /* ---- 画面遷移(ワイプ)アニメーション ----
  * 決定/戻る操作でui_screens_refresh()が呼ばれるたびに、中央の帯が上下に
- * 伸びて画面全体を覆う→隠れている間に中身を差し替える→帯が縮んで新しい
- * 画面が現れる、という演出を挟む(カテゴリ選択画面のデザインスケッチ参照)。
- * lv_layer_top()に載せることで、内部でs_screen/s_param_screenのどちらに
- * 切り替わっても常に最前面に描画される。
+ * 伸びて画面全体を覆う→少し間を置く→隠れている間に中身を差し替える→帯が
+ * 縮んで新しい画面が現れる、という演出を挟む(カテゴリ選択画面のデザイン
+ * スケッチ参照)。lv_layer_top()に載せることで、内部でs_screen/
+ * s_param_screenのどちらに切り替わっても常に最前面に描画される。
+ * パラメータ調整画面(NAV_LEVEL_PARAM)には出さない: ui_screens_refresh()
+ * 側でレベルを見て分岐している(下記参照)。
  * トランジション中はapp_main.c側がui_screens_transition_in_progress()を
  * 見て入力ポーリングを丸ごとスキップするため、「操作を中断された」感覚に
- * ならない程度の短さ(片道90ms、往復180ms)に抑えてある。 */
+ * ならない程度の短さに抑えてある(値は実機で見ながら調整したもの)。 */
 #define TRANSITION_SCREEN_W_PX 320   // BSP_LCD_H_RES(GAUGE_SCREEN_Wと同じ理由でハードコード)
 #define TRANSITION_SCREEN_H_PX 240   // BSP_LCD_V_RES
-#define TRANSITION_COVER_MS     90
-#define TRANSITION_REVEAL_MS    90
+#define TRANSITION_COVER_MS     170
+#define TRANSITION_HOLD_MS       60  // 覆い切ってからリビールを始めるまでの間(帯で隠れたまま静止)
+#define TRANSITION_REVEAL_MS    200
 #define TRANSITION_COLOR   0x3399ff  // GAUGE_COLOR_ACTIVEと同系色(スケッチの青帯)
 
 static lv_obj_t *s_transition_overlay;
@@ -271,6 +274,7 @@ static void transition_cover_completed_cb(lv_anim_t *a)
     lv_anim_set_exec_cb(&reveal, (lv_anim_exec_xcb_t)lv_obj_set_height);
     lv_anim_set_values(&reveal, TRANSITION_SCREEN_H_PX, 0);
     lv_anim_set_duration(&reveal, TRANSITION_REVEAL_MS);
+    lv_anim_set_delay(&reveal, TRANSITION_HOLD_MS);
     lv_anim_set_path_cb(&reveal, lv_anim_path_ease_out);
     lv_anim_set_completed_cb(&reveal, transition_reveal_completed_cb);
     lv_anim_start(&reveal);
@@ -348,6 +352,13 @@ void ui_screens_init(void)
 
 void ui_screens_refresh(void)
 {
+    /* ワイプ演出はカテゴリ選択(大/小カテゴリ・メニュー選択)の3階層専用。
+     * パラメータ調整画面(円ゲージ)には出さないので、遷移先がPARAMのときは
+     * 演出無しで即座に切り替える。 */
+    if (nav_get_state()->level == NAV_LEVEL_PARAM) {
+        apply_refresh();
+        return;
+    }
     start_transition();
 }
 
