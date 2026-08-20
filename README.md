@@ -74,7 +74,7 @@ GitHubリポジトリをVercelにGit連携すれば、push毎に `sim/` のWASM�
 2. Framework Presetは「Other」のままでよい(vercel.jsonの設定が優先される)
 3. デプロイを実行
 
-初回デプロイ時にVercelのビルドコンテナにEmscripten SDKを毎回インストール
-してからビルドするため、数分かかる。もしビルドコンテナに`cmake`等が無くて
-失敗した場合は、GitHub Actions側でビルドしてVercel CLIで静的デプロイする
-方式に切り替えが必要(cmake不足で失敗したら教えてほしい)。
+デプロイの度にEmscripten SDKとLVGL本体をダウンロードしてからビルドするため
+(ビルドキャッシュが効かない場合)数分かかる。`sim/vercel-build.sh`は
+Vercelのビルドイメージに`cmake`/`ninja`が無い場合はpip経由のvenvで自動的に
+用意する(2026/08確認: Vercelの標準イメージには入っていなかった)。

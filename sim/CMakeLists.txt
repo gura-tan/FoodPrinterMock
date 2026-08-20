@@ -25,7 +25,19 @@ if(EMSCRIPTEN)
     add_compile_options("-sUSE_SDL=2")
 endif()
 
-add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/../managed_components/lvgl__lvgl lvgl)
+# managed_components/lvgl__lvglはESP-IDFのコンポーネントマネージャがidf.py build時に
+# 取得するもので.gitignore対象のため、cloneしただけのリポジトリ(Vercel等)には
+# 存在しない。simはそれに依存させず、main/側と同じバージョン(9.5.0。
+# main/ui_screens.c等の実装もこのバージョンのAPIを前提にしている)のLVGLを
+# GitHubから直接取得してビルドする。
+include(FetchContent)
+FetchContent_Declare(
+    lvgl
+    GIT_REPOSITORY https://github.com/lvgl/lvgl.git
+    GIT_TAG v9.5.0
+    GIT_SHALLOW TRUE
+)
+FetchContent_MakeAvailable(lvgl)
 
 set(MAIN_DIR ${CMAKE_CURRENT_SOURCE_DIR}/../main)
 
