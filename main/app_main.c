@@ -301,7 +301,10 @@ void app_main(void)
 
             if (delta != 0 && !within_jitter_guard) {
                 nav_move_selection(delta);
-                sound_hooks_play_move();
+                /* PROCEED/DONE再生中でも即座に打ち切って割り込む。実機で
+                 * 試した結果、MOVE/HITがPROCEEDのテールを打ち切ってでも
+                 * 常に即座に反応したほうが操作感が安定するため。 */
+                sound_hooks_play(UI_SOUND_MOVE);
                 bsp_display_lock(0);
                 ui_screens_sync_selection();
                 bsp_display_unlock();

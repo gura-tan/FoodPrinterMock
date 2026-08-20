@@ -107,13 +107,6 @@ typedef struct {
 static esp_codec_dev_handle_t s_spk_dev;
 static QueueHandle_t s_sound_queue;
 
-/* sound_taskが「今まさに再生中」のクリップのID(-1=何も再生していない)。
- * sound_hooks_play_move()が、PROCEED/DONEのテールだけを保護してMOVE同士は
- * 即座に割り込ませる、という判断に使う。sound_task(単一のタスク)からのみ
- * 書き込まれ、他タスクからは読むだけなので特別な同期は行っていない
- * (多少古い値を読んでも、次のMOVE要求の割り込み可否がずれるだけで実害はない)。 */
-static volatile int s_now_playing_id = -1;
-
 /* 直前にesp_codec_dev_open()した際のフォーマットをキャッシュしておき、
  * 同じフォーマットのクリップが連続する場合はclose/openし直さない。
  * (これが以前undefinedのまま参照されていて、ビルドが通らない状態だった箇所) */
@@ -398,9 +391,7 @@ static void sound_task(void *arg)
             continue;
         }
 
-        s_now_playing_id = (int)id;
         play_clip_interruptible(&s_slots[id].clip);
-        s_now_playing_id = -1;
     }
 }
 
@@ -453,19 +444,5 @@ void sound_hooks_play_chained(ui_sound_id_t id)
         return;
     }
     sound_request_t req = { .id = id, .interrupt = false };
-    xQueueOverwrite(s_sound_queue, &req);
-}
-
-void sound_hooks_play_move(void)
-{
-    if (s_sound_queue == NULL) {
-        return;
-    }
-    /* 今再生中がPROCEED/DONE(リバーブテールを保護したい音)のときだけ
-     * chained(打ち切らない)にする。それ以外(MOVE自身の連打を含む)は
-     * 通常通り即座に割り込ませ、すばやいダイヤル操作に音を追従させる。 */
-    int now_playing = s_now_playing_id;
-    bool protect_tail = (now_playing == UI_SOUND_PROCEED || now_playing == UI_SOUND_DONE);
-    sound_request_t req = { .id = UI_SOUND_MOVE, .interrupt = !protect_tail };
     xQueueOverwrite(s_sound_queue, &req);
 }

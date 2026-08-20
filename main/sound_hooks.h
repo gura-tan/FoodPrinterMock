@@ -41,13 +41,6 @@ void sound_hooks_play(ui_sound_id_t id);
  * 打ち切らないようにする) */
 void sound_hooks_play_chained(ui_sound_id_t id);
 
-/* UI_SOUND_MOVE専用の呼び出し口。今再生中の音がPROCEED/DONE(テールを
- * 保護したい音)ならchained、それ以外(MOVE同士の連打を含む)なら
- * 即座に割り込むsound_hooks_play()相当、を内部で自動的に選ぶ。
- * すばやいダイヤル操作でMOVE音が毎ティック追従しつつ、PROCEED/DONEの
- * リバーブテールだけは打ち切らないようにするための専用関数。 */
-void sound_hooks_play_move(void);
-
 #ifdef __cplusplus
 }
 #endif
