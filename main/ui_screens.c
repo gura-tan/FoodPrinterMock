@@ -219,47 +219,65 @@ static void show_param_gauges(void)
 }
 
 /* ---- 画面遷移(ワイプ)アニメーション ----
- * 決定/戻る操作でui_screens_refresh()が呼ばれるたびに、中央の帯が上下に
- * 伸びて画面全体を覆う→少し間を置く→隠れている間に中身を差し替える→帯が
- * 縮んで新しい画面が現れる、という演出を挟む(カテゴリ選択画面のデザイン
- * スケッチ参照)。lv_layer_top()に載せることで、内部でs_screen/
- * s_param_screenのどちらに切り替わっても常に最前面に描画される。
- * パラメータ調整画面(NAV_LEVEL_PARAM)には出さない: ui_screens_refresh()
- * 側でレベルを見て分岐している(下記参照)。
+ * カテゴリ選択画面(大/小カテゴリ・メニュー選択の3階層で使い回すlv_roller)を
+ * 離れるときだけ、rollerの白い枠を左→右に白で覆う→少し間を置く→隠れている
+ * 間に中身を差し替える→左→右に白がはけて新しい画面が現れる、という演出を
+ * 挟む(デザインスケッチ参照)。
+ *
+ * s_transition_maskはrollerと全く同じ位置/サイズ/角丸半径に毎回揃える
+ * 透明なクリッピング用コンテナで、中の白い帯s_transition_bandは角丸無しの
+ * ただの矩形。帯の「幅」だけを動かすことで、maskのclip_corner設定により
+ * 本当の外側の角(=rollerの丸みと一致する場所)だけが丸くクリップされ、
+ * 動いている境界線(帯のもう片方の辺)は常にまっすぐになる。帯自体に角丸を
+ * 付けて幅を変えると、動いている境界まで丸まって見えてしまい
+ * 「角丸の長方形なのに違和感がある」動きになるため、あえてこの二重構造に
+ * している。
+ * maskはlv_layer_top()配下に置く: MENU→PARAM遷移のように、覆い切った後の
+ * 中身差し替えでアクティブ画面がs_screenからs_param_screenへ切り替わっても
+ * (lv_scr_load()で別画面になっても)帯が消えずに最前面へ残り続けるように
+ * するため。位置合わせはlv_obj_align_to()が双方の絶対座標で計算するので、
+ * 親(画面)が違っても問題なく揃う。
+ *
+ * パラメータ調整画面(NAV_LEVEL_PARAM)にはrollerの白い枠自体が存在しない
+ * ので演出を行わない。ただし「遷移先」ではなく「直前に表示していた画面
+ * (=遷移元)」がPARAMかどうかで判定する(s_last_shown_level)。遷移先基準
+ * だと、最後のSTART確定(DONE)でPARAM→MAJORへ戻る際に「遷移先はMAJOR=
+ * カテゴリだから」と誤って再生されてしまい、rollerが実在しない状態からの
+ * 遷移と噛み合わなくなるため。
+ *
  * トランジション中はapp_main.c側がui_screens_transition_in_progress()を
  * 見て入力ポーリングを丸ごとスキップするため、「操作を中断された」感覚に
  * ならない程度の短さに抑えてある(値は実機で見ながら調整したもの)。 */
-#define TRANSITION_SCREEN_W_PX 320   // BSP_LCD_H_RES(GAUGE_SCREEN_Wと同じ理由でハードコード)
-#define TRANSITION_SCREEN_H_PX 240   // BSP_LCD_V_RES
 #define TRANSITION_COVER_MS     170
-#define TRANSITION_HOLD_MS       60  // 覆い切ってからリビールを始めるまでの間(帯で隠れたまま静止)
+#define TRANSITION_HOLD_MS      100  // 覆い切ってからリビールを始めるまでの間(帯で隠れたまま静止)
 #define TRANSITION_REVEAL_MS    200
-#define TRANSITION_COLOR   0x3399ff  // GAUGE_COLOR_ACTIVEと同系色(スケッチの青帯)
 
-static lv_obj_t *s_transition_overlay;
-static bool      s_transition_active;
+static lv_obj_t    *s_transition_mask;  // rollerと同じ位置/サイズ/角丸のクリッピング用コンテナ(自身は透明)
+static lv_obj_t    *s_transition_band;  // maskの子。角丸無しの単色矩形で、これの幅を動かす
+static bool         s_transition_active;
+static nav_level_t  s_last_shown_level; // 直前にapply_refresh()で実際に表示した階層
 
 static void apply_refresh(void)
 {
     if (nav_get_state()->level == NAV_LEVEL_PARAM) {
         show_param_gauges();
-        return;
+    } else {
+        char options_buf[1024];
+        build_roller_options_string(options_buf, sizeof(options_buf));
+
+        lv_roller_set_options(s_roller, options_buf, LV_ROLLER_MODE_NORMAL);
+        lv_roller_set_selected(s_roller, nav_get_selected_index(), LV_ANIM_OFF);
+
+        lv_label_set_text(s_title_label, level_title(nav_get_state()->level));
+        lv_scr_load(s_screen);
     }
-
-    char options_buf[1024];
-    build_roller_options_string(options_buf, sizeof(options_buf));
-
-    lv_roller_set_options(s_roller, options_buf, LV_ROLLER_MODE_NORMAL);
-    lv_roller_set_selected(s_roller, nav_get_selected_index(), LV_ANIM_OFF);
-
-    lv_label_set_text(s_title_label, level_title(nav_get_state()->level));
-    lv_scr_load(s_screen);
+    s_last_shown_level = nav_get_state()->level;
 }
 
 static void transition_reveal_completed_cb(lv_anim_t *a)
 {
     (void)a;
-    lv_obj_add_flag(s_transition_overlay, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_add_flag(s_transition_mask, LV_OBJ_FLAG_HIDDEN);
     s_transition_active = false;
 }
 
@@ -268,11 +286,17 @@ static void transition_cover_completed_cb(lv_anim_t *a)
     (void)a;
     apply_refresh(); // 帯で隠れている間に中身を差し替える
 
+    /* 幅はcover完了時点でmaskの全幅と一致しているので、位置合わせを
+     * LEFT_MID→RIGHT_MIDへ切り替えても見た目はジャンプしない(どちらの
+     * 基準でも「幅=maskの全幅」のときの座標は同じになるため)。以後は
+     * 右端を固定したまま幅を縮めることで、左端(=境界線)だけが右へ動く。 */
+    lv_obj_align(s_transition_band, LV_ALIGN_RIGHT_MID, 0, 0);
+
     lv_anim_t reveal;
     lv_anim_init(&reveal);
-    lv_anim_set_var(&reveal, s_transition_overlay);
-    lv_anim_set_exec_cb(&reveal, (lv_anim_exec_xcb_t)lv_obj_set_height);
-    lv_anim_set_values(&reveal, TRANSITION_SCREEN_H_PX, 0);
+    lv_anim_set_var(&reveal, s_transition_band);
+    lv_anim_set_exec_cb(&reveal, (lv_anim_exec_xcb_t)lv_obj_set_width);
+    lv_anim_set_values(&reveal, lv_obj_get_width(s_transition_mask), 0);
     lv_anim_set_duration(&reveal, TRANSITION_REVEAL_MS);
     lv_anim_set_delay(&reveal, TRANSITION_HOLD_MS);
     lv_anim_set_path_cb(&reveal, lv_anim_path_ease_out);
@@ -283,14 +307,26 @@ static void transition_cover_completed_cb(lv_anim_t *a)
 static void start_transition(void)
 {
     s_transition_active = true;
-    lv_obj_clear_flag(s_transition_overlay, LV_OBJ_FLAG_HIDDEN);
-    lv_obj_set_height(s_transition_overlay, 0);
+
+    /* rollerの現在の位置/サイズ/角丸に毎回揃え直す(rollerは3階層とも
+     * 同じ大きさで使い回しているので通常は変わらないが、念のため)。
+     * update_layout()でレイアウトを確定させてからサイズを読む。 */
+    lv_obj_update_layout(s_roller);
+    lv_obj_set_size(s_transition_mask, lv_obj_get_width(s_roller), lv_obj_get_height(s_roller));
+    lv_obj_align_to(s_transition_mask, s_roller, LV_ALIGN_CENTER, 0, 0);
+    lv_obj_set_style_radius(s_transition_mask, lv_obj_get_style_radius(s_roller, LV_PART_MAIN), 0);
+    lv_obj_set_style_bg_color(s_transition_band, lv_obj_get_style_bg_color(s_roller, LV_PART_MAIN), 0);
+
+    lv_obj_clear_flag(s_transition_mask, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_set_height(s_transition_band, lv_obj_get_height(s_transition_mask));
+    lv_obj_align(s_transition_band, LV_ALIGN_LEFT_MID, 0, 0); // 左端固定、右端(=境界線)が右へ動く
+    lv_obj_set_width(s_transition_band, 0);
 
     lv_anim_t cover;
     lv_anim_init(&cover);
-    lv_anim_set_var(&cover, s_transition_overlay);
-    lv_anim_set_exec_cb(&cover, (lv_anim_exec_xcb_t)lv_obj_set_height);
-    lv_anim_set_values(&cover, 0, TRANSITION_SCREEN_H_PX);
+    lv_anim_set_var(&cover, s_transition_band);
+    lv_anim_set_exec_cb(&cover, (lv_anim_exec_xcb_t)lv_obj_set_width);
+    lv_anim_set_values(&cover, 0, lv_obj_get_width(s_transition_mask));
     lv_anim_set_duration(&cover, TRANSITION_COVER_MS);
     lv_anim_set_path_cb(&cover, lv_anim_path_ease_in);
     lv_anim_set_completed_cb(&cover, transition_cover_completed_cb);
@@ -333,17 +369,24 @@ void ui_screens_init(void)
     lv_obj_set_style_bg_color(s_param_screen, lv_color_hex(0x101010), 0);
     lv_obj_set_style_text_font(s_param_screen, &font_ja_menu_14, 0);
 
-    /* ワイプ演出用の帯。lv_layer_top()配下なのでs_screen/s_param_screenの
-     * どちらが表示中でも常に最前面に来る。remove_style_all()でデフォルト
-     * テーマの余白/枠/角丸を消し、単色の帯として振る舞わせる。 */
-    s_transition_overlay = lv_obj_create(lv_layer_top());
-    lv_obj_remove_style_all(s_transition_overlay);
-    lv_obj_set_size(s_transition_overlay, TRANSITION_SCREEN_W_PX, 0);
-    lv_obj_align(s_transition_overlay, LV_ALIGN_CENTER, 0, 0);
-    lv_obj_set_style_bg_color(s_transition_overlay, lv_color_hex(TRANSITION_COLOR), 0);
-    lv_obj_set_style_bg_opa(s_transition_overlay, LV_OPA_COVER, 0);
-    lv_obj_clear_flag(s_transition_overlay, LV_OBJ_FLAG_CLICKABLE);
-    lv_obj_add_flag(s_transition_overlay, LV_OBJ_FLAG_HIDDEN);
+    /* ワイプ演出用のmask+band。lv_layer_top()配下なのでs_screen/
+     * s_param_screenのどちらが表示中でも常に最前面に来る。位置/サイズ/
+     * 角丸/色はrollerに合わせて毎回start_transition()側で揃え直すので、
+     * ここでは箱を作るだけでよい。remove_style_all()でデフォルトテーマの
+     * 余白/枠/角丸を消してある。 */
+    s_transition_mask = lv_obj_create(lv_layer_top());
+    lv_obj_remove_style_all(s_transition_mask);
+    lv_obj_set_style_bg_opa(s_transition_mask, LV_OPA_TRANSP, 0); // クリップ目的のみ、自身は透明
+    lv_obj_set_style_clip_corner(s_transition_mask, true, 0);
+    lv_obj_clear_flag(s_transition_mask, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_clear_flag(s_transition_mask, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_add_flag(s_transition_mask, LV_OBJ_FLAG_HIDDEN);
+
+    s_transition_band = lv_obj_create(s_transition_mask);
+    lv_obj_remove_style_all(s_transition_band);
+    lv_obj_set_style_bg_opa(s_transition_band, LV_OPA_COVER, 0);
+    lv_obj_clear_flag(s_transition_band, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_clear_flag(s_transition_band, LV_OBJ_FLAG_SCROLLABLE);
 
     lv_scr_load(s_screen); /* v9系では lv_screen_load() に読み替え可 */
 
@@ -352,10 +395,13 @@ void ui_screens_init(void)
 
 void ui_screens_refresh(void)
 {
-    /* ワイプ演出はカテゴリ選択(大/小カテゴリ・メニュー選択)の3階層専用。
-     * パラメータ調整画面(円ゲージ)には出さないので、遷移先がPARAMのときは
-     * 演出無しで即座に切り替える。 */
-    if (nav_get_state()->level == NAV_LEVEL_PARAM) {
+    /* ワイプ演出はrollerの白い枠を覆う/はがす動きなので、直前に表示して
+     * いた画面(遷移元)がカテゴリ選択(roller)画面のときだけ行う。パラメータ
+     * 調整画面(円ゲージ)から出るとき(START確定→大カテゴリへ戻るDONE操作を
+     * 含む)はrollerが表示されていなかったので演出無しで即座に切り替える。
+     * 「遷移先」で判定しないのは、その基準だとDONE操作(PARAM→MAJOR)を
+     * 「遷移先はMAJOR=カテゴリだから」と誤って演出対象にしてしまうため。 */
+    if (s_last_shown_level == NAV_LEVEL_PARAM) {
         apply_refresh();
         return;
     }
