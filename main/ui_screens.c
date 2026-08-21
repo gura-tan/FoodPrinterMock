@@ -287,6 +287,22 @@ static void transition_cover_completed_cb(lv_anim_t *a)
     (void)a;
     apply_refresh(); // 帯で隠れている間に中身を差し替える
 
+    if (nav_get_state()->level == NAV_LEVEL_PARAM) {
+        /* パラメータ調整画面のゲージ列はroller(260px幅)よりも画面幅
+         * いっぱいに並んでいる(GAUGE_SCREEN_W参照)。maskをrollerサイズの
+         * ままrevealさせると、右端のSTART円がワイプの範囲外(=最初から
+         * 覆われていない)になってしまい、中身差し替えの瞬間に先出しで
+         * 見えてしまう(はがれていく境界線と重なって見える不具合の原因)。
+         * covered状態(中身差し替え直後)はまだ帯で完全に隠れているうちに、
+         * maskを画面全体のサイズへ広げ直してからrevealさせることで、
+         * ゲージ列全体(STARTを含む)がワイプ演出の対象になるようにする。 */
+        lv_obj_update_layout(s_param_screen);
+        lv_obj_set_size(s_transition_mask, lv_obj_get_width(s_param_screen), lv_obj_get_height(s_param_screen));
+        lv_obj_center(s_transition_mask);
+        lv_obj_set_style_radius(s_transition_mask, 0, 0);
+        lv_obj_set_height(s_transition_band, lv_obj_get_height(s_transition_mask));
+    }
+
     /* 幅はcover完了時点でmaskの全幅と一致しているので、位置合わせの基準を
      * 切り替えても見た目はジャンプしない(どちらの基準でも「幅=maskの
      * 全幅」のときの座標は同じになるため)。以後は片方の端を固定したまま
@@ -294,8 +310,12 @@ static void transition_cover_completed_cb(lv_anim_t *a)
      * 通常(左→右): coverはLEFT_MID固定で伸ばした→revealはRIGHT_MID固定で
      * 縮め、境界線(左端)が左→右に動く。
      * 戻る(右→左): coverはRIGHT_MID固定で伸ばした→revealはLEFT_MID固定で
-     * 縮め、境界線(右端)が右→左に動く(完全に鏡写しの動き)。 */
+     * 縮め、境界線(右端)が右→左に動く(完全に鏡写しの動き)。
+     * PARAM遷移の場合は上でmask/bandを広げ直しているので、幅もmask全幅へ
+     * 揃え直す(そうしないと直前のrollerサイズの帯幅のまま位置だけ動いて
+     * しまい、覆いが一瞬欠けて見える)。 */
     lv_obj_align(s_transition_band, s_transition_reverse ? LV_ALIGN_LEFT_MID : LV_ALIGN_RIGHT_MID, 0, 0);
+    lv_obj_set_width(s_transition_band, lv_obj_get_width(s_transition_mask));
 
     lv_anim_t reveal;
     lv_anim_init(&reveal);
