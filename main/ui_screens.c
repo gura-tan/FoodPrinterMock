@@ -81,15 +81,22 @@ static void build_roller_options_string(char *buf, size_t buf_size)
 #define GAUGE_COLOR_ACTIVE  0x66b3ff  // 操作中の円のアクセントカラー(暗背景での輝度コントラストを上げるため明るめの青に調整)
 #define GAUGE_COLOR_INACTIVE 0x606060 // 操作対象外の円のグレー
 
+/* 円の下に出す補足キャプション(「量」「味の濃さ」「推定: x min」)。操作中の円の
+ * ものだけを表示し、他は隠すことで同時に1つしか出ないようにする(sync_param_gauges参照)。
+ * START側の所要時間はまだ算出ロジックが無いため、デモ用の固定プレースホルダー値。 */
+#define GAUGE_CAPTION_Y_OFFSET (GAUGE_Y_OFFSET + GAUGE_DIAMETER / 2 + 12)
+#define GAUGE_START_CAPTION_PLACEHOLDER "推定: 15 min"
+
 /* 塩味パラメータだけアイコン表示にする対応づけ。将来アイコン付きパラメータが
  * 増えたらparameter_def_tにアイコン参照フィールドを足す形に切り替えてよいが、
  * 試作段階では名前で判定するだけに留めている。 */
 #define ICON_PARAM_NAME_SALT "塩味"
 
 typedef struct {
-    lv_obj_t *circle;      // lv_arc本体
-    lv_obj_t *label;       // 数値/STARTラベル(アイコン表示のスロットではNULL)
-    lv_obj_t *icon;        // アイコン画像(数値表示のスロットではNULL)
+    lv_obj_t *circle;        // lv_arc本体
+    lv_obj_t *label;         // 数値/STARTラベル(アイコン表示のスロットではNULL)
+    lv_obj_t *icon;          // アイコン画像(数値表示のスロットではNULL)
+    lv_obj_t *caption_label; // 円の下の補足キャプション。操作中のスロットのみ表示する
     bool      is_start;
     int       param_index; // is_start==trueのときは-1
 } gauge_slot_t;
@@ -138,6 +145,13 @@ static void build_param_gauges(const menu_item_def_t *menu)
         s_gauge_slots[i].is_start = is_start;
         s_gauge_slots[i].param_index = is_start ? -1 : i;
 
+        /* 円の下の補足キャプション。sync_param_gauges()が操作中の1枠だけを
+         * 表示状態にするので、ここでは一律非表示で作っておく。 */
+        lv_obj_t *caption_label = lv_label_create(s_param_screen);
+        lv_obj_align(caption_label, LV_ALIGN_CENTER, x, GAUGE_CAPTION_Y_OFFSET);
+        lv_obj_add_flag(caption_label, LV_OBJ_FLAG_HIDDEN);
+        s_gauge_slots[i].caption_label = caption_label;
+
         if (is_start) {
             lv_arc_set_bg_angles(circle, 0, 360); // 隙間の無い満円
             lv_obj_set_style_arc_opa(circle, LV_OPA_TRANSP, LV_PART_INDICATOR); // 値の概念が無いので非表示
@@ -148,6 +162,8 @@ static void build_param_gauges(const menu_item_def_t *menu)
             lv_label_set_text(label, "START");
             lv_obj_center(label);
             s_gauge_slots[i].label = label;
+
+            lv_label_set_text(caption_label, GAUGE_START_CAPTION_PLACEHOLDER);
         } else {
             const parameter_def_t *p = &menu->parameters[i];
             lv_arc_set_bg_angles(circle, GAUGE_ANGLE_BG_START, GAUGE_ANGLE_BG_END);
@@ -166,6 +182,8 @@ static void build_param_gauges(const menu_item_def_t *menu)
                 lv_obj_center(label);
                 s_gauge_slots[i].label = label;
             }
+
+            lv_label_set_text(caption_label, p->caption ? p->caption : p->name);
         }
     }
 
@@ -181,6 +199,14 @@ static void sync_param_gauges(void)
         gauge_slot_t *slot = &s_gauge_slots[i];
         bool active = (i == active_index);
         lv_color_t color = lv_color_hex(active ? GAUGE_COLOR_ACTIVE : GAUGE_COLOR_INACTIVE);
+
+        /* 同時に1つの円だけキャプションを見せたいので、操作中の枠以外は隠す */
+        if (active) {
+            lv_obj_set_style_text_color(slot->caption_label, lv_color_hex(0xffffff), 0);
+            lv_obj_clear_flag(slot->caption_label, LV_OBJ_FLAG_HIDDEN);
+        } else {
+            lv_obj_add_flag(slot->caption_label, LV_OBJ_FLAG_HIDDEN);
+        }
 
         if (slot->is_start) {
             lv_obj_set_style_arc_color(slot->circle, color, LV_PART_MAIN);

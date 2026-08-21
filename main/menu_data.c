@@ -6,8 +6,8 @@
  * (main/../デザインスケッチ-パラメーター.png 相当)に合わせるため削除した。
  * 実データが決まったらここを差し替える。 */
 static const parameter_def_t k_params_taste[] = {
-    { .name = "量",   .unit = "g", .min_value = 100, .max_value = 500, .default_value = 200 },
-    { .name = "塩味", .unit = "",  .min_value = 0,   .max_value = 10,  .default_value = 5   },
+    { .name = "量",   .caption = "量",       .unit = "g", .min_value = 100, .max_value = 500, .default_value = 200 },
+    { .name = "塩味", .caption = "味の濃さ", .unit = "",  .min_value = 0,   .max_value = 10,  .default_value = 5   },
 };
 #define TASTE_PARAM_COUNT (sizeof(k_params_taste) / sizeof(k_params_taste[0]))
 

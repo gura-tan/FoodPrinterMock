@@ -32,7 +32,9 @@ extern "C" {
  */
 
 typedef struct {
-    const char *name;          // パラメータ名 (例: "塩味")
+    const char *name;          // パラメータ名 (例: "塩味")。アイコン判定など内部識別に使う
+    const char *caption;       // パラメータ調整画面で円の下に出す表示用ラベル (例: "味の濃さ")。
+                                // nameと文言を分けたい場合に使う。UI表示専用でnameの代わりにはしない
     const char *unit;          // 単位。無ければ空文字列 ""
     int32_t     min_value;
     int32_t     max_value;
