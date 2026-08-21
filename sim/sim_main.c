@@ -35,23 +35,30 @@
 static void key_event_cb(lv_event_t *e)
 {
     if (ui_screens_transition_in_progress()) {
-        return; // 実機と同様、ワイプ演出中は入力を無視する
+        /* 実機と同様、ワイプ演出中は操作を一切受け付けない。ただし「押しても
+         * 何も起きなかった」ことが分かるよう、実機側のような押しっぱなし
+         * 長押しキャンセルの再現(app_main.c参照)はキーボード入力には無い
+         * ため、ここは単純にdeny音だけ鳴らして無視する。 */
+        sound_hooks_play(UI_SOUND_DENY);
+        return;
     }
 
     uint32_t key = lv_event_get_key(e);
     switch (key) {
     case LV_KEY_LEFT:
-    case LV_KEY_UP:
-        nav_move_selection(-1);
-        sound_hooks_play(UI_SOUND_MOVE);
+    case LV_KEY_UP: {
+        bool moved = nav_move_selection(-1);
+        sound_hooks_play(moved ? UI_SOUND_MOVE : UI_SOUND_DENY);
         ui_screens_sync_selection();
         break;
+    }
     case LV_KEY_RIGHT:
-    case LV_KEY_DOWN:
-        nav_move_selection(1);
-        sound_hooks_play(UI_SOUND_MOVE);
+    case LV_KEY_DOWN: {
+        bool moved = nav_move_selection(1);
+        sound_hooks_play(moved ? UI_SOUND_MOVE : UI_SOUND_DENY);
         ui_screens_sync_selection();
         break;
+    }
     case LV_KEY_ENTER: {
         /* キーボードには実機のような押す/離すの区別が無いため、1回の
          * Enterで「押した瞬間(HIT)→短押しで離した瞬間(PROCEED/DONE)」を

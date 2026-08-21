@@ -126,18 +126,22 @@ const char *const *nav_get_current_options(size_t *out_count)
     return s_option_ptr;
 }
 
-void nav_move_selection(int delta)
+bool nav_move_selection(int delta)
 {
     if (s_dirty) {
         refresh_options();
     }
     if (s_option_count == 0) {
-        return;
+        return false;
     }
     int next = s_current_selection + delta;
     if (next < 0) next = 0;
     if (next >= (int)s_option_count) next = (int)s_option_count - 1;
+    if (next == s_current_selection) {
+        return false; // 既に端にいて、さらに同方向へ回した(クランプされた)
+    }
     s_current_selection = next;
+    return true;
 }
 
 int nav_get_selected_index(void)

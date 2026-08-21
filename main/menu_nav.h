@@ -45,8 +45,11 @@ const nav_state_t *nav_get_state(void);
  * 戻り値は次にnav_*系関数を呼ぶまで有効。 */
 const char *const *nav_get_current_options(size_t *out_count);
 
-/* エンコーダーのdeltaぶんだけ現在の選択インデックスを移動する(範囲外はクランプ) */
-void nav_move_selection(int delta);
+/* エンコーダーのdeltaぶんだけ現在の選択インデックスを移動する(範囲外はクランプ)。
+ * 戻り値: 実際に選択インデックスが変化したらtrue。既にリストの端にいて
+ * その方向へさらに回した場合(=クランプされて変化しなかった場合)はfalseを
+ * 返すので、呼び出し側はこれを見てdeny音を鳴らし分けられる。 */
+bool nav_move_selection(int delta);
 int  nav_get_selected_index(void);
 
 /* 「決定」操作: 現在の選択で1階層深く進む。

@@ -23,6 +23,12 @@ typedef enum {
                         // HITと連続して鳴ることで一つのフレーズになる想定
     UI_SOUND_MOVE,      // 選択項目が変わった(ダイヤルを1ステップ回した)
     UI_SOUND_BACK,      // キャンセル/戻る操作
+    UI_SOUND_DENY,      // 操作してもなにも変化が起きなかった(画面遷移演出中の
+                        // 入力・リストの端で範囲外方向へ回した場合など)。
+                        // UI_SOUND_DONEより前に置くこと: sound_hooks.c/
+                        // sim_sound.cはUI_SOUND_DONEを「最後の音ID」として
+                        // 配列サイズ・ループ境界に使っているため、新しい音を
+                        // 追加するときは常にUI_SOUND_DONEの手前に挿入する。
     UI_SOUND_DONE,      // 全パラメータ確定(一連の操作フロー完了)
 } ui_sound_id_t;
 

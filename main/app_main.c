@@ -279,13 +279,56 @@ void app_main(void)
     /* 押している間にCANCEL_HOLD_MSへ達してBACKを確定させたかどうか。
      * 確定後、実際にボタンを離した瞬間の処理を無効化するために使う。 */
     bool back_triggered_this_press = false;
+    /* 今再生中(または直前に開始した)画面遷移が「戻る」方向かどうか。
+     * ui_screens_refresh(bool is_back)を呼ぶ箇所と同じタイミングで
+     * 更新する。遷移中のdeny音判定(下記)で、ボタンの押し直しを
+     * deny対象にするかどうかを分けるために使う。 */
+    bool transition_is_back = false;
+    /* 「戻る」演出の最中だけ使う、ボタンの押下状態の影武者。
+     * button_was_pressed本体(長押し/デバウンス判定に使う本来の状態)は
+     * 演出中は一切更新せず凍結したままにしたいので、deny音を鳴らす
+     * 判定専用にこちらで別途追跡する。 */
+    bool deny_shadow_pressed = false;
 
     while (1) {
         if (ui_screens_transition_in_progress()) {
-            /* 画面遷移のワイプ演出中は入力を一切受け付けない。演出は
-             * 片道90msと短いため、この間だけencoder_poll()自体を
-             * 呼ばずにスキップしても押しっぱなし長押し(CANCEL_HOLD_MS)の
-             * 判定には影響しない(press_started_tickは実時間基準のまま)。 */
+            /* 画面遷移のワイプ演出中は、ダイヤル操作や決定/戻る操作を
+             * 一切反映しない。ただし「操作しても変化が起きない」ことを
+             * 音で伝えるため、encoder_poll()自体は呼び続けて検知だけ行う
+             * (演出はTRANSITION_COVER_MS+HOLD_MS+REVEAL_MSの合計で
+             * 470ms前後かかる。以前この付近のコメントにあった「片道90ms」
+             * は古い値の名残で、現在の定数とは合っていない)。
+             *
+             * ダイヤル回転: 以前はencoder_poll()自体を全く呼ばず、演出が
+             * 終わった次の1回のポーリングでまとめて反映していた(=見た目
+             * には遅延しているだけで、回した分は無駄になっていなかった)。
+             * これだとdeny音を鳴らす機会が無いため、演出中に検知した回転量は
+             * その場で読み捨てる(=本当に無効化する)方式に変更した。
+             *
+             * ボタン: 「戻る」演出(長押しでnav_back()を確定させた直後の
+             * ワイプ)の最中に限り、押し直しの立ち上がりエッジをdeny音の
+             * 対象にする(deny_shadow_pressedで影武者的に追跡するだけで、
+             * button_was_pressed等の本来の状態には触れない)。
+             * 「決定」演出(PROCEED/DONE)の最中の押下は、従来通り一切
+             * 素通りさせる: 短押し直後に押しっぱなしにすると演出終了後に
+             * 新規の押下として検出され、そのまま長押しでBACKに確定する
+             * 「押し間違いにすぐ気付いて戻れる」挙動が実機確認で好まれて
+             * いるため、これを崩さないようにしている。 */
+            int32_t delta = 0;
+            bool button_pressed = false;
+            esp_err_t err = encoder_poll(&delta, transition_is_back ? &button_pressed : NULL);
+            if (err == ESP_OK) {
+                bool deny = (delta != 0);
+                if (transition_is_back) {
+                    if (button_pressed && !deny_shadow_pressed) {
+                        deny = true;
+                    }
+                    deny_shadow_pressed = button_pressed;
+                }
+                if (deny) {
+                    sound_hooks_play(UI_SOUND_DENY);
+                }
+            }
             vTaskDelay(pdMS_TO_TICKS(POLL_INTERVAL_MS));
             continue;
         }
@@ -309,11 +352,14 @@ void app_main(void)
             bool debounced_button_pressed = within_button_debounce ? button_was_pressed : button_pressed;
 
             if (delta != 0 && !within_jitter_guard) {
-                nav_move_selection(delta);
+                /* 既にリストの端にいて、さらに同方向へ回した場合は選択が
+                 * 変化しないので、MOVEの代わりにDENYを鳴らして「これ以上は
+                 * 進めない」ことを伝える。 */
+                bool moved = nav_move_selection(delta);
                 /* PROCEED/DONE再生中でも即座に打ち切って割り込む。実機で
                  * 試した結果、MOVE/HITがPROCEEDのテールを打ち切ってでも
                  * 常に即座に反応したほうが操作感が安定するため。 */
-                sound_hooks_play(UI_SOUND_MOVE);
+                sound_hooks_play(moved ? UI_SOUND_MOVE : UI_SOUND_DENY);
                 bsp_display_lock(0);
                 ui_screens_sync_selection();
                 bsp_display_unlock();
@@ -336,6 +382,8 @@ void app_main(void)
                     nav_back();
                     sound_hooks_play(UI_SOUND_BACK);
                     back_triggered_this_press = true;
+                    transition_is_back = true;
+                    deny_shadow_pressed = true; // 確定させた押下は引き続き押されている
                     bsp_display_lock(0);
                     ui_screens_refresh(true); // 戻る操作: ワイプは右→左
                     bsp_display_unlock();
@@ -354,6 +402,7 @@ void app_main(void)
                      * 繋げる(HIT→PROCEEDで一つのフレーズになる意図)。 */
                     bool finished = nav_confirm();
                     sound_hooks_play(finished ? UI_SOUND_DONE : UI_SOUND_PROCEED);
+                    transition_is_back = false;
                     if (finished) {
                         ESP_LOGI(TAG, "all parameters confirmed - resetting to major category (demo loop)");
                         nav_init();

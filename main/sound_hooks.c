@@ -91,6 +91,7 @@ static const char *const k_sound_filenames[UI_SOUND_DONE + 1] = {
     [UI_SOUND_PROCEED] = "proceed.wav",
     [UI_SOUND_MOVE]    = "move.wav",
     [UI_SOUND_BACK]    = "back.wav",
+    [UI_SOUND_DENY]    = "deny.wav",
     [UI_SOUND_DONE]    = "done.wav",
 };
 
