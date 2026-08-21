@@ -85,6 +85,14 @@ static void refresh_options(void)
             count++;
         }
         s_option_count = count;
+
+        /* リングが0%(空)から始まると操作感が掴みにくいため、初期表示は
+         * default_valueに最も近い刻みから始める(min_valueからではない)。 */
+        int32_t default_offset = p->default_value - p->min_value;
+        if (default_offset < 0) default_offset = 0;
+        int default_selection = (int)(default_offset / step);
+        if (default_selection >= (int)s_option_count) default_selection = (int)s_option_count - 1;
+        s_current_selection = default_selection;
         break;
     }
     }
