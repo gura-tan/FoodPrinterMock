@@ -294,13 +294,16 @@ static void transition_cover_completed_cb(lv_anim_t *a)
          * 覆われていない)になってしまい、中身差し替えの瞬間に先出しで
          * 見えてしまう(はがれていく境界線と重なって見える不具合の原因)。
          * covered状態(中身差し替え直後)はまだ帯で完全に隠れているうちに、
-         * maskを画面全体のサイズへ広げ直してからrevealさせることで、
-         * ゲージ列全体(STARTを含む)がワイプ演出の対象になるようにする。 */
-        lv_obj_update_layout(s_param_screen);
-        lv_obj_set_size(s_transition_mask, lv_obj_get_width(s_param_screen), lv_obj_get_height(s_param_screen));
-        lv_obj_center(s_transition_mask);
+         * maskの幅だけ画面幅いっぱいへ広げ直してからrevealさせることで、
+         * ゲージ列全体(STARTを含む)がワイプ演出の対象になるようにする。
+         * 高さ/縦位置はrollerのまま変えない(ゲージ円の縦方向の範囲は
+         * rollerの高さに収まっているため広げる必要が無く、下手に画面全体の
+         * 高さへ広げて再センタリングすると、rollerの中心とゲージの中心の
+         * 微妙なオフセット差(roller: +10 / ゲージ: +14)でmaskが縦に
+         * ズレて見える不具合を起こしていた)。 */
+        lv_obj_set_width(s_transition_mask, GAUGE_SCREEN_W);
+        lv_obj_align_to(s_transition_mask, s_roller, LV_ALIGN_CENTER, 0, 0);
         lv_obj_set_style_radius(s_transition_mask, 0, 0);
-        lv_obj_set_height(s_transition_band, lv_obj_get_height(s_transition_mask));
     }
 
     /* 幅はcover完了時点でmaskの全幅と一致しているので、位置合わせの基準を
