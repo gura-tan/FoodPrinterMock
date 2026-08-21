@@ -296,13 +296,28 @@ static void transition_cover_completed_cb(lv_anim_t *a)
          * covered状態(中身差し替え直後)はまだ帯で完全に隠れているうちに、
          * maskの幅だけ画面幅いっぱいへ広げ直してからrevealさせることで、
          * ゲージ列全体(STARTを含む)がワイプ演出の対象になるようにする。
-         * 高さ/縦位置はrollerのまま変えない(ゲージ円の縦方向の範囲は
+         *
+         * 広げる基準はCENTERではなくLEFT_MID(戻る操作ならRIGHT_MID)にする
+         * こと。cover中はLEFT_MID固定で右辺だけを伸ばしてきた(=左辺は
+         * rollerの左端で最初から動いていない)ので、ここでCENTER基準に
+         * すると左辺までrollerの外側へ飛んでしまい、「覆われていたはずの
+         * 場所より外側に新しい箱が現れて動き出す」ように見えてしまう
+         * (実際に見え方の指摘を受けて修正した)。LEFT_MID基準にして左辺は
+         * rollerの左端に固定したまま、右辺だけを画面右端まで伸ばすことで、
+         * cover中の伸びの「つづき」として自然に見えるようにする。
+         *
+         * 高さ/縦位置もrollerのまま変えない(ゲージ円の縦方向の範囲は
          * rollerの高さに収まっているため広げる必要が無く、下手に画面全体の
          * 高さへ広げて再センタリングすると、rollerの中心とゲージの中心の
          * 微妙なオフセット差(roller: +10 / ゲージ: +14)でmaskが縦に
-         * ズレて見える不具合を起こしていた)。 */
-        lv_obj_set_width(s_transition_mask, GAUGE_SCREEN_W);
-        lv_obj_align_to(s_transition_mask, s_roller, LV_ALIGN_CENTER, 0, 0);
+         * ズレて見える不具合を起こしていた)。LEFT_MID/RIGHT_MIDでの
+         * align_to()は縦方向はrollerの中心に揃えてくれるので、この点も
+         * 従来どおりに保たれる。 */
+        int32_t roller_w = lv_obj_get_width(s_roller);
+        int32_t extended_w = (GAUGE_SCREEN_W + roller_w) / 2; // 固定する側の辺から画面端までの幅
+        lv_obj_set_width(s_transition_mask, extended_w);
+        lv_obj_align_to(s_transition_mask, s_roller,
+                         s_transition_reverse ? LV_ALIGN_RIGHT_MID : LV_ALIGN_LEFT_MID, 0, 0);
         lv_obj_set_style_radius(s_transition_mask, 0, 0);
     }
 
