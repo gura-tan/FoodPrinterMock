@@ -78,7 +78,7 @@ static void build_roller_options_string(char *buf, size_t buf_size)
 #define GAUGE_Y_OFFSET         14   // タイトルの下に少し余裕を持たせる
 #define GAUGE_ANGLE_BG_START  270   // 12時ちょうど(0deg=3時, 90deg=6時, 180deg=9時, 270deg=12時)
 #define GAUGE_ANGLE_BG_END    (GAUGE_ANGLE_BG_START - 1) // 359°スイープ(実質1周、コメント参照)
-#define GAUGE_COLOR_ACTIVE  0x3399ff  // 操作中の円のアクセントカラー(スケッチのSTARTの青)
+#define GAUGE_COLOR_ACTIVE  0x66b3ff  // 操作中の円のアクセントカラー(暗背景での輝度コントラストを上げるため明るめの青に調整)
 #define GAUGE_COLOR_INACTIVE 0x606060 // 操作対象外の円のグレー
 
 /* 塩味パラメータだけアイコン表示にする対応づけ。将来アイコン付きパラメータが
