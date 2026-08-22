@@ -48,14 +48,16 @@ static void key_event_cb(lv_event_t *e)
     case LV_KEY_LEFT:
     case LV_KEY_UP: {
         bool moved = nav_move_selection(-1);
-        sound_hooks_play(moved ? UI_SOUND_MOVE : UI_SOUND_DENY);
+        bool on_param_screen = nav_get_state()->level == NAV_LEVEL_PARAM;
+        sound_hooks_play(moved ? (on_param_screen ? UI_SOUND_MOVE_PARAM : UI_SOUND_MOVE_CATEGORY) : UI_SOUND_DENY);
         ui_screens_sync_selection();
         break;
     }
     case LV_KEY_RIGHT:
     case LV_KEY_DOWN: {
         bool moved = nav_move_selection(1);
-        sound_hooks_play(moved ? UI_SOUND_MOVE : UI_SOUND_DENY);
+        bool on_param_screen = nav_get_state()->level == NAV_LEVEL_PARAM;
+        sound_hooks_play(moved ? (on_param_screen ? UI_SOUND_MOVE_PARAM : UI_SOUND_MOVE_CATEGORY) : UI_SOUND_DENY);
         ui_screens_sync_selection();
         break;
     }

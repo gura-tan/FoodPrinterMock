@@ -359,7 +359,9 @@ void app_main(void)
                 /* PROCEED/DONE再生中でも即座に打ち切って割り込む。実機で
                  * 試した結果、MOVE/HITがPROCEEDのテールを打ち切ってでも
                  * 常に即座に反応したほうが操作感が安定するため。 */
-                sound_hooks_play(moved ? UI_SOUND_MOVE : UI_SOUND_DENY);
+                bool on_param_screen = nav_get_state()->level == NAV_LEVEL_PARAM;
+                ui_sound_id_t move_sound = on_param_screen ? UI_SOUND_MOVE_PARAM : UI_SOUND_MOVE_CATEGORY;
+                sound_hooks_play(moved ? move_sound : UI_SOUND_DENY);
                 bsp_display_lock(0);
                 ui_screens_sync_selection();
                 bsp_display_unlock();

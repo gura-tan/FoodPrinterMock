@@ -3,7 +3,7 @@
  * ブラウザ上のWeb Audioで実装したもの。main/sound_hooks.cは
  * esp_codec_dev/SDカードに依存するためsim側では使わず、こちらに差し替える。
  *
- * 実機はSDカードの /sdcard/sounds/<preset>/{hit,proceed,move,back,done}.wav を
+ * 実機はSDカードの /sdcard/sounds/<preset>/{hit,proceed,movecat,moveprm,back,deny,done}.wav を
  * 起動時に1回だけ読み込むが、ブラウザはローカルファイルへ自由にアクセス
  * できないため、ページ上の「音フォルダを選択」ボタンから
  * <input type=file webkitdirectory> でユーザーにPC上の任意のフォルダを
@@ -26,10 +26,10 @@ EM_JS(void, sim_sound_js_init, (), {
 
     var state = {
         ctx: null,
-        buffers: {},    // "hit"|"proceed"|"move"|"back"|"deny"|"done" -> AudioBuffer
+        buffers: {},    // "hit"|"proceed"|"movecat"|"moveprm"|"back"|"deny"|"done" -> AudioBuffer
         current: null,  // 再生中のAudioBufferSourceNode(即時割り込み版のみ管理)
         pending: null,  // play_chained()で予約された次の音の名前
-        names: ["hit", "proceed", "move", "back", "deny", "done"],
+        names: ["hit", "proceed", "movecat", "moveprm", "back", "deny", "done"],
     };
     window.__simSound = state;
 
@@ -85,7 +85,7 @@ EM_JS(void, sim_sound_js_init, (), {
         'border-bottom:1px solid #ccc;display:flex;align-items:center;gap:8px;';
 
     var label = document.createElement('span');
-    label.textContent = '音: 未読み込み(hit/proceed/move/back/deny/done.wavを含む' +
+    label.textContent = '音: 未読み込み(hit/proceed/movecat/moveprm/back/deny/done.wavを含む' +
         'フォルダを選んでください)';
 
     var btn = document.createElement('button');
@@ -118,7 +118,7 @@ EM_JS(void, sim_sound_js_init, (), {
             var done = function() {
                 remaining--;
                 if (remaining === 0) {
-                    label.textContent = '音: ' + loaded.length + '/6 読み込み済み (' +
+                    label.textContent = '音: ' + loaded.length + '/7 読み込み済み (' +
                         loaded.sort().join(', ') + ')';
                 }
             };
@@ -143,7 +143,7 @@ EM_JS(void, sim_sound_js_init, (), {
 });
 
 EM_JS(void, sim_sound_js_play, (int id, int chained), {
-    var names = ["hit", "proceed", "move", "back", "deny", "done"];
+    var names = ["hit", "proceed", "movecat", "moveprm", "back", "deny", "done"];
     var name = names[id];
     if (window.__simSoundPlay) {
         window.__simSoundPlay(name, chained);
