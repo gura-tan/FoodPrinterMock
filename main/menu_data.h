@@ -45,6 +45,13 @@ typedef struct {
     const char             *name;              // メニュー名
     const parameter_def_t  *parameters;
     size_t                  parameter_count;
+    int32_t                 estimated_minutes; // 推定調理時間(分)。パラメータ調整画面の
+                                                // START下キャプションと調理中画面(カウントダウン)
+                                                // の初期値の両方がこの値を参照する(main/menu_nav.c
+                                                // nav_cooking_start()呼び出し箇所参照)。今はどの
+                                                // メニューも同じ固定値(main/menu_data.c参照)だが、
+                                                // フィールドをメニュー単位にしてあるので、将来
+                                                // 料理ごとに変える場合もここを変えるだけでよい。
 } menu_item_def_t;
 
 typedef struct {

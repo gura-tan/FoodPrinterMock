@@ -24,6 +24,11 @@ void ui_screens_refresh(bool is_back);
  * ローラーの表示位置だけをアニメーション付きで更新する(選択肢の再構築はしない) */
 void ui_screens_sync_selection(void);
 
+/* 調理中画面(カウントダウン)の円/ラベルを最新のnav_cooking_*()状態に
+ * 合わせて更新する。app_main.c/sim_main.cのメインループから、
+ * NAV_LEVEL_COOKINGの間は毎回(ダイヤル入力の有無に関わらず)呼ぶこと。 */
+void ui_screens_sync_cooking(void);
+
 /* ui_screens_refresh()が起こす画面遷移(ワイプ)アニメーションの最中はtrue。
  * 呼び出し側(app_main.c)はこの間、入力ポーリングを丸ごとスキップして
  * ボタン/エンコーダー操作を受け付けないようにする。 */

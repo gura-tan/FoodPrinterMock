@@ -20,13 +20,18 @@ extern "C" {
  * パラメータ調整(NAV_LEVEL_PARAM)だけは専用の円ゲージ画面を持つため別扱い。
  * parameter_indexは 0..parameter_count-1 が各パラメータ(ダイヤルで値を調整)、
  * parameter_count(=最後の次のインデックス)は「START」を表す仮想ステップで、
- * 値を持たず決定操作だけを受け付ける(nav_confirm()参照)。 */
+ * 値を持たず決定操作だけを受け付ける(nav_confirm()参照)。
+ *
+ * NAV_LEVEL_COOKINGはSTART確定後に入る調理中(カウントダウン)画面。他の階層と
+ * 違い「選択肢から1つ選ぶ」モデルではなく実時間で進む状態なので、
+ * nav_get_current_options()等は使わずnav_cooking_*()系の専用APIで扱う。 */
 
 typedef enum {
     NAV_LEVEL_MAJOR = 0,   // 大カテゴリ選択
     NAV_LEVEL_SUB,         // 小カテゴリ選択
     NAV_LEVEL_MENU,        // メニュー選択
     NAV_LEVEL_PARAM,       // パラメータ調整 (parameter_index で1画面/1パラメータ、末尾はSTART)
+    NAV_LEVEL_COOKING,     // 調理中(カウントダウン)。STARTの確定で入る
 } nav_level_t;
 
 typedef struct {
@@ -75,6 +80,31 @@ const menu_item_def_t *nav_get_current_menu_item(void);
  * 計算し、それ以外(確定済み/未到達)はnav_get_confirmed_param_value()と同じ値
  * (未到達なら0)を返す。円ゲージ画面がダイヤル操作に追従して値を表示するために使う。 */
 int32_t nav_get_param_live_value(int index);
+
+/* ---- 調理中画面(カウントダウン) ----
+ * 実時間で進む状態はここ(モデル層)で保持し、ui_screens.cは毎フレーム
+ * 読み出して円/ラベルを更新するだけにする(パラメータ調整画面のダイヤル
+ * 追従表示と同じ設計)。nav_confirm()がSTART確定時に内部でnav_cooking_start()
+ * を呼ぶため、呼び出し側から直接呼ぶことは通常ない。 */
+
+/* total_seconds分のカウントダウンを開始する。 */
+void nav_cooking_start(int32_t total_seconds);
+
+/* 実時間の経過ぶんだけ残り時間を減らす。app_main.c/sim_main.cのメインループから
+ * (NAV_LEVEL_COOKINGの間は)毎回呼ぶこと。
+ * 戻り値: この呼び出しでちょうど0に達した(=完了に遷移した)瞬間だけtrue
+ * (readyサウンドの再生トリガー用)。 */
+bool nav_cooking_tick(void);
+
+/* ダイヤル入力で残り時間を早送り/巻き戻しする(実演用)。delta>0で減らす方向
+ * (デモで待ち時間を早送りする用途を優先している)、delta<0で増やす方向。
+ * 完了後(残り0)は常に無効化されfalseを返す。
+ * 戻り値: 実際に値が変化したらtrue(MOVE/DENY音の判定に使う)。 */
+bool nav_cooking_adjust(int32_t delta);
+
+int32_t nav_cooking_remaining_seconds(void);
+int32_t nav_cooking_total_seconds(void);
+bool    nav_cooking_is_complete(void);
 
 #ifdef __cplusplus
 }

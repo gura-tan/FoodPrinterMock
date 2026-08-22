@@ -333,6 +333,18 @@ void app_main(void)
             continue;
         }
 
+        if (nav_get_state()->level == NAV_LEVEL_COOKING) {
+            /* 調理中画面のカウントダウンは実時間で進むため、ダイヤル/ボタン
+             * 入力の有無に関わらず毎ループ更新する。0に達した瞬間だけ
+             * nav_cooking_tick()がtrueを返すので、そこでreadyサウンドを鳴らす。 */
+            if (nav_cooking_tick()) {
+                sound_hooks_play(UI_SOUND_READY);
+            }
+            bsp_display_lock(0);
+            ui_screens_sync_cooking();
+            bsp_display_unlock();
+        }
+
         int32_t delta = 0;
         bool button_pressed = false;
         esp_err_t err = encoder_poll(&delta, &button_pressed);
@@ -351,7 +363,17 @@ void app_main(void)
                 ((now - last_button_edge_tick) * portTICK_PERIOD_MS < BUTTON_DEBOUNCE_MS);
             bool debounced_button_pressed = within_button_debounce ? button_was_pressed : button_pressed;
 
-            if (delta != 0 && !within_jitter_guard) {
+            if (delta != 0 && !within_jitter_guard && nav_get_state()->level == NAV_LEVEL_COOKING) {
+                /* 調理中画面ではダイヤルは選択移動ではなく残り時間の早送り/
+                 * 巻き戻し(デモ用)。完了後はnav_cooking_adjust()側で常に
+                 * 無効化されるので、ここではchangedの有無だけ見ればよい。 */
+                bool changed = nav_cooking_adjust(delta);
+                bool now_complete = nav_cooking_is_complete();
+                sound_hooks_play(!changed ? UI_SOUND_DENY : (now_complete ? UI_SOUND_READY : UI_SOUND_MOVE_PARAM));
+                bsp_display_lock(0);
+                ui_screens_sync_cooking();
+                bsp_display_unlock();
+            } else if (delta != 0 && !within_jitter_guard) {
                 /* 既にリストの端にいて、さらに同方向へ回した場合は選択が
                  * 変化しないので、MOVEの代わりにDENYを鳴らして「これ以上は
                  * 進めない」ことを伝える。 */
@@ -402,12 +424,17 @@ void app_main(void)
                      * sound_hooks_play()(即時割り込み版)を使い、押し始めに
                      * 鳴らしたHITがまだ再生中でもそこで打ち切ってPROCEEDに
                      * 繋げる(HIT→PROCEEDで一つのフレーズになる意図)。 */
+                    /* nav_confirm()の戻り値=true は「START確定」の合図であり、
+                     * 状態遷移(調理中画面へ進む/完了確認で大カテゴリへ戻す)は
+                     * nav_confirm()自身が内部で行うので、ここでは呼び出し側は
+                     * DONE音を鳴らすだけでよい(以前あったnav_init()の呼び出しは
+                     * 不要になった: 今それをやると調理中画面への遷移を
+                     * 即座に上書きしてしまう)。 */
                     bool finished = nav_confirm();
                     sound_hooks_play(finished ? UI_SOUND_DONE : UI_SOUND_PROCEED);
                     transition_is_back = false;
                     if (finished) {
-                        ESP_LOGI(TAG, "all parameters confirmed - resetting to major category (demo loop)");
-                        nav_init();
+                        ESP_LOGI(TAG, "START confirmed - entering cooking countdown");
                     }
                     bsp_display_lock(0);
                     ui_screens_refresh(false); // 決定操作: ワイプは左→右

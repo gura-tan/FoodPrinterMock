@@ -19,7 +19,7 @@ static const char *TAG = "sound_hooks";
  *
  * これまでmain/sounds/＊.wavをEMBED_FILESでファームウェアに直接埋め込んで
  * いたが、SDカードに移行した。SD上の
- *   <mount_point>/sounds/<preset>/{hit,proceed,movecat,moveprm,back,deny,done}.wav
+ *   <mount_point>/sounds/<preset>/{hit,proceed,movecat,moveprm,back,deny,ready,done}.wav
  * を起動時に一度だけ全部読み込み、ヒープ上のバッファに保持したまま
  * 使い回す(毎回SDから読むとファイルI/Oのレイテンシが再生の遅延・
  * 音飛びに直結するため、これまでのEMBED_FILES版と同じく「起動時に一度だけ
@@ -93,6 +93,7 @@ static const char *const k_sound_filenames[UI_SOUND_DONE + 1] = {
     [UI_SOUND_MOVE_PARAM]   = "moveprm.wav",
     [UI_SOUND_BACK]         = "back.wav",
     [UI_SOUND_DENY]         = "deny.wav",
+    [UI_SOUND_READY]        = "ready.wav",
     [UI_SOUND_DONE]         = "done.wav",
 };
 

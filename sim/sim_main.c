@@ -47,30 +47,48 @@ static void key_event_cb(lv_event_t *e)
     switch (key) {
     case LV_KEY_LEFT:
     case LV_KEY_UP: {
-        bool moved = nav_move_selection(-1);
-        bool on_param_screen = nav_get_state()->level == NAV_LEVEL_PARAM;
-        sound_hooks_play(moved ? (on_param_screen ? UI_SOUND_MOVE_PARAM : UI_SOUND_MOVE_CATEGORY) : UI_SOUND_DENY);
-        ui_screens_sync_selection();
+        if (nav_get_state()->level == NAV_LEVEL_COOKING) {
+            /* 調理中画面ではダイヤルは選択移動ではなく残り時間の早送り/
+             * 巻き戻し(デモ用)。app_main.c側と同じ割り当て。 */
+            bool changed = nav_cooking_adjust(-1);
+            bool now_complete = nav_cooking_is_complete();
+            sound_hooks_play(!changed ? UI_SOUND_DENY : (now_complete ? UI_SOUND_READY : UI_SOUND_MOVE_PARAM));
+            ui_screens_sync_cooking();
+        } else {
+            bool moved = nav_move_selection(-1);
+            bool on_param_screen = nav_get_state()->level == NAV_LEVEL_PARAM;
+            sound_hooks_play(moved ? (on_param_screen ? UI_SOUND_MOVE_PARAM : UI_SOUND_MOVE_CATEGORY) : UI_SOUND_DENY);
+            ui_screens_sync_selection();
+        }
         break;
     }
     case LV_KEY_RIGHT:
     case LV_KEY_DOWN: {
-        bool moved = nav_move_selection(1);
-        bool on_param_screen = nav_get_state()->level == NAV_LEVEL_PARAM;
-        sound_hooks_play(moved ? (on_param_screen ? UI_SOUND_MOVE_PARAM : UI_SOUND_MOVE_CATEGORY) : UI_SOUND_DENY);
-        ui_screens_sync_selection();
+        if (nav_get_state()->level == NAV_LEVEL_COOKING) {
+            bool changed = nav_cooking_adjust(1);
+            bool now_complete = nav_cooking_is_complete();
+            sound_hooks_play(!changed ? UI_SOUND_DENY : (now_complete ? UI_SOUND_READY : UI_SOUND_MOVE_PARAM));
+            ui_screens_sync_cooking();
+        } else {
+            bool moved = nav_move_selection(1);
+            bool on_param_screen = nav_get_state()->level == NAV_LEVEL_PARAM;
+            sound_hooks_play(moved ? (on_param_screen ? UI_SOUND_MOVE_PARAM : UI_SOUND_MOVE_CATEGORY) : UI_SOUND_DENY);
+            ui_screens_sync_selection();
+        }
         break;
     }
     case LV_KEY_ENTER: {
         /* キーボードには実機のような押す/離すの区別が無いため、1回の
          * Enterで「押した瞬間(HIT)→短押しで離した瞬間(PROCEED/DONE)」を
          * 続けて鳴らす(sound_hooks_play()は即時割り込み版なので、HITは
-         * すぐPROCEED/DONEに打ち切られてつながる。実機の短押しと同じ)。 */
+         * すぐPROCEED/DONEに打ち切られてつながる。実機の短押しと同じ)。
+         * nav_confirm()の戻り値=trueは「START確定」の合図であり、状態遷移
+         * (調理中画面へ進む/完了確認で大カテゴリへ戻す)はnav_confirm()
+         * 自身が内部で行う(main/menu_nav.c参照)。 */
         sound_hooks_play(UI_SOUND_HIT);
         bool finished = nav_confirm();
         if (finished) {
-            printf("all parameters confirmed - resetting to major category (demo loop)\n");
-            nav_init();
+            printf("START confirmed - entering cooking countdown\n");
         }
         sound_hooks_play(finished ? UI_SOUND_DONE : UI_SOUND_PROCEED);
         ui_screens_refresh(false); // 決定操作: ワイプは左->右
@@ -89,6 +107,14 @@ static void key_event_cb(lv_event_t *e)
 
 static void loop_iter(void)
 {
+    if (nav_get_state()->level == NAV_LEVEL_COOKING) {
+        /* 実機側(app_main.c)のポーリングループと同じく、ダイヤル/ボタン
+         * 入力の有無に関わらず毎フレーム残り時間を更新する。 */
+        if (nav_cooking_tick()) {
+            sound_hooks_play(UI_SOUND_READY);
+        }
+        ui_screens_sync_cooking();
+    }
     lv_timer_handler();
 }
 

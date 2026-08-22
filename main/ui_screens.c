@@ -26,10 +26,11 @@ static lv_obj_t *s_roller;
 static const char *level_title(nav_level_t level)
 {
     switch (level) {
-        case NAV_LEVEL_MAJOR: return "大カテゴリ";
-        case NAV_LEVEL_SUB:   return "小カテゴリ";
-        case NAV_LEVEL_MENU:  return "メニュー選択";
-        case NAV_LEVEL_PARAM: return "パラメータ調整";
+        case NAV_LEVEL_MAJOR:   return "大カテゴリ";
+        case NAV_LEVEL_SUB:     return "小カテゴリ";
+        case NAV_LEVEL_MENU:    return "メニュー選択";
+        case NAV_LEVEL_PARAM:   return "パラメータ調整";
+        case NAV_LEVEL_COOKING: return "調理中";
     }
     return "";
 }
@@ -85,7 +86,6 @@ static void build_roller_options_string(char *buf, size_t buf_size)
  * ものだけを表示し、他は隠すことで同時に1つしか出ないようにする(sync_param_gauges参照)。
  * START側の所要時間はまだ算出ロジックが無いため、デモ用の固定プレースホルダー値。 */
 #define GAUGE_CAPTION_Y_OFFSET (GAUGE_Y_OFFSET + GAUGE_DIAMETER / 2 + 12)
-#define GAUGE_START_CAPTION_PLACEHOLDER "推定: 15 min"
 
 /* 塩味パラメータだけアイコン表示にする対応づけ。将来アイコン付きパラメータが
  * 増えたらparameter_def_tにアイコン参照フィールドを足す形に切り替えてよいが、
@@ -163,7 +163,12 @@ static void build_param_gauges(const menu_item_def_t *menu)
             lv_obj_center(label);
             s_gauge_slots[i].label = label;
 
-            lv_label_set_text(caption_label, GAUGE_START_CAPTION_PLACEHOLDER);
+            /* 調理中画面のカウントダウン初期値と連動させるため、固定文言では
+             * なくmenu->estimated_minutes(main/menu_data.c参照)から組み立てる。
+             * nav_confirm()がSTART確定時に渡すのも同じ値(*60して秒に換算)。 */
+            char start_caption[40]; // gccのformat-truncation対策で余裕を持たせる
+            snprintf(start_caption, sizeof(start_caption), "推定: %ld min", (long)menu->estimated_minutes);
+            lv_label_set_text(caption_label, start_caption);
         } else {
             const parameter_def_t *p = &menu->parameters[i];
             lv_arc_set_bg_angles(circle, GAUGE_ANGLE_BG_START, GAUGE_ANGLE_BG_END);
@@ -244,6 +249,117 @@ static void show_param_gauges(void)
     lv_scr_load(s_param_screen);
 }
 
+/* ---- 調理中画面(カウントダウン) ----
+ * NAV_LEVEL_PARAMのSTART確定で入る専用画面。円(lv_arc)1つとその中央に
+ * 分:秒のラベルを重ねるだけの単純な構成で、他の画面のようなnav側の
+ * options機構(nav_get_current_options()等)は使わない。カウントダウンの
+ * 残り時間はmenu_nav.cのnav_cooking_*()が実時間ベースで管理しており、
+ * ここは毎フレーム読んで表示を合わせるだけ(パラメータ調整画面のダイヤル
+ * 追従表示と同じ設計)。
+ *
+ * 見た目のスタイル(色/円の描き方)はパラメータ調整画面の円ゲージと揃えて
+ * いる: 実行中はGAUGE_COLOR_INACTIVE(グレー)で残り時間ぶんの弧を12時起点で
+ * 表示し(値が減るほど弧の終端=境界線が反時計回りに12時側へ後退していく)、
+ * 完了後はGAUGE_COLOR_ACTIVE(青)へ切り替えて満円を再表示し、インジケータの
+ * opacityをlv_animで往復させることでフェードイン/アウトを繰り返す。
+ * メニューによって構成が変わるパラメータゲージ画面と違い中身が固定なので、
+ * (build_param_gauges()のような遅延構築はせず)ui_screens_init()で一度だけ作る。 */
+#define COOKING_DIAMETER      170
+#define COOKING_ARC_WIDTH      14
+#define COOKING_ANGLE_START   270  // ゲージ画面と同じく12時起点
+#define COOKING_ANGLE_END     (COOKING_ANGLE_START - 1) // 359°スイープ(理由はbuild_param_gauges()のコメント参照)
+#define COOKING_FADE_MS       700  // 完了後フェードイン/アウト片道の時間
+#define COOKING_FADE_MIN_OPA  LV_OPA_30
+
+static lv_obj_t *s_cooking_screen;
+static lv_obj_t *s_cooking_circle;
+static lv_obj_t *s_cooking_label;
+static bool      s_cooking_pulse_active; // 完了後のフェードアニメが今動いているか
+
+static void cooking_pulse_anim_cb(void *var, int32_t v)
+{
+    lv_obj_set_style_arc_opa((lv_obj_t *)var, (lv_opa_t)v, LV_PART_INDICATOR);
+}
+
+static void start_cooking_pulse(void)
+{
+    s_cooking_pulse_active = true;
+    lv_anim_t a;
+    lv_anim_init(&a);
+    lv_anim_set_var(&a, s_cooking_circle);
+    lv_anim_set_exec_cb(&a, cooking_pulse_anim_cb);
+    lv_anim_set_values(&a, LV_OPA_COVER, COOKING_FADE_MIN_OPA);
+    lv_anim_set_duration(&a, COOKING_FADE_MS);
+    lv_anim_set_playback_duration(&a, COOKING_FADE_MS);
+    lv_anim_set_repeat_count(&a, LV_ANIM_REPEAT_INFINITE);
+    lv_anim_set_path_cb(&a, lv_anim_path_ease_in_out);
+    lv_anim_start(&a);
+}
+
+static void stop_cooking_pulse(void)
+{
+    if (!s_cooking_pulse_active) {
+        return;
+    }
+    s_cooking_pulse_active = false;
+    lv_anim_del(s_cooking_circle, cooking_pulse_anim_cb);
+    lv_obj_set_style_arc_opa(s_cooking_circle, LV_OPA_COVER, LV_PART_INDICATOR);
+}
+
+static void build_cooking_screen(void)
+{
+    s_cooking_screen = lv_obj_create(NULL);
+    lv_obj_set_style_bg_color(s_cooking_screen, lv_color_hex(0x101010), 0);
+    lv_obj_set_style_text_font(s_cooking_screen, &font_ja_menu_14, 0);
+
+    lv_obj_t *circle = lv_arc_create(s_cooking_screen);
+    lv_obj_set_size(circle, COOKING_DIAMETER, COOKING_DIAMETER);
+    lv_obj_center(circle);
+    lv_obj_clear_flag(circle, LV_OBJ_FLAG_CLICKABLE); // rollerと同じくタッチでの直接操作は無効化
+    lv_obj_set_style_bg_opa(circle, LV_OPA_TRANSP, LV_PART_KNOB);
+    lv_obj_set_style_border_width(circle, 0, LV_PART_KNOB);
+    lv_arc_set_bg_angles(circle, COOKING_ANGLE_START, COOKING_ANGLE_END);
+    lv_obj_set_style_arc_opa(circle, LV_OPA_TRANSP, LV_PART_MAIN); // 背景トラックは非表示(param gaugeと同じ)
+    lv_obj_set_style_arc_width(circle, COOKING_ARC_WIDTH, LV_PART_INDICATOR);
+    lv_obj_set_style_arc_rounded(circle, false, LV_PART_INDICATOR);
+    s_cooking_circle = circle;
+
+    lv_obj_t *label = lv_label_create(circle);
+    lv_obj_set_style_text_color(label, lv_color_hex(0xffffff), 0);
+    lv_obj_center(label);
+    s_cooking_label = label;
+}
+
+static void sync_cooking_screen(void)
+{
+    int32_t total = nav_cooking_total_seconds();
+    int32_t remaining = nav_cooking_remaining_seconds();
+    bool complete = nav_cooking_is_complete();
+    int32_t range_max = (total > 0) ? total : 1;
+
+    lv_arc_set_range(s_cooking_circle, 0, range_max);
+    lv_arc_set_value(s_cooking_circle, complete ? range_max : remaining);
+
+    lv_color_t color = lv_color_hex(complete ? GAUGE_COLOR_ACTIVE : GAUGE_COLOR_INACTIVE);
+    lv_obj_set_style_arc_color(s_cooking_circle, color, LV_PART_INDICATOR);
+
+    char buf[16]; // gccのformat-truncation対策で余裕を持たせる(実際に入るのは"M:SS"程度)
+    snprintf(buf, sizeof(buf), "%ld:%02ld", (long)(remaining / 60), (long)(remaining % 60));
+    lv_label_set_text(s_cooking_label, buf);
+
+    if (complete && !s_cooking_pulse_active) {
+        start_cooking_pulse();
+    } else if (!complete && s_cooking_pulse_active) {
+        stop_cooking_pulse(); // 戻る操作でやり直した場合等、完了状態から抜けたときの後始末
+    }
+}
+
+static void show_cooking_screen(void)
+{
+    sync_cooking_screen();
+    lv_scr_load(s_cooking_screen);
+}
+
 /* ---- 画面遷移(ワイプ)アニメーション ----
  * カテゴリ選択画面(大/小カテゴリ・メニュー選択の3階層で使い回すlv_roller)を
  * 離れるときだけ、rollerの白い枠を左→右に白で覆う→少し間を置く→隠れている
@@ -288,6 +404,8 @@ static void apply_refresh(void)
 {
     if (nav_get_state()->level == NAV_LEVEL_PARAM) {
         show_param_gauges();
+    } else if (nav_get_state()->level == NAV_LEVEL_COOKING) {
+        show_cooking_screen();
     } else {
         char options_buf[1024];
         build_roller_options_string(options_buf, sizeof(options_buf));
@@ -441,6 +559,11 @@ void ui_screens_init(void)
     lv_obj_set_style_bg_color(s_param_screen, lv_color_hex(0x101010), 0);
     lv_obj_set_style_text_font(s_param_screen, &font_ja_menu_14, 0);
 
+    /* 調理中画面(カウントダウン)。パラメータゲージ画面と違いメニューに
+     * よって構成が変わらない(円1つ+ラベルのみ)ため、遅延構築せずここで
+     * 一度だけ作る。 */
+    build_cooking_screen();
+
     /* ワイプ演出用のmask+band。lv_layer_top()配下なのでs_screen/
      * s_param_screenのどちらが表示中でも常に最前面に来る。位置/サイズ/
      * 角丸/色はrollerに合わせて毎回start_transition()側で揃え直すので、
@@ -469,11 +592,18 @@ void ui_screens_refresh(bool is_back)
 {
     /* ワイプ演出はrollerの白い枠を覆う/はがす動きなので、直前に表示して
      * いた画面(遷移元)がカテゴリ選択(roller)画面のときだけ行う。パラメータ
-     * 調整画面(円ゲージ)から出るとき(START確定→大カテゴリへ戻るDONE操作を
-     * 含む)はrollerが表示されていなかったので演出無しで即座に切り替える。
-     * 「遷移先」で判定しないのは、その基準だとDONE操作(PARAM→MAJOR)を
+     * 調整画面(円ゲージ)・調理中画面(カウントダウン)から出るとき(START確定→
+     * 調理中画面、完了確認→大カテゴリへ戻るデモループ、戻る操作を含む)は
+     * rollerが表示されていなかったので演出無しで即座に切り替える。
+     * 「遷移先」で判定しないのは、その基準だとDONE操作(COOKING→MAJOR)を
      * 「遷移先はMAJOR=カテゴリだから」と誤って演出対象にしてしまうため。 */
-    if (s_last_shown_level == NAV_LEVEL_PARAM) {
+    if (s_last_shown_level == NAV_LEVEL_COOKING && nav_get_state()->level != NAV_LEVEL_COOKING) {
+        /* 完了後のフェードアニメが、画面を離れたあとも見えないまま回り
+         * 続けないようにする(次に調理中画面へ戻ったときsync_cooking_screen()
+         * でも後始末はするが、それまで無駄にアニメが走り続けるのを防ぐ)。 */
+        stop_cooking_pulse();
+    }
+    if (s_last_shown_level == NAV_LEVEL_PARAM || s_last_shown_level == NAV_LEVEL_COOKING) {
         apply_refresh();
         return;
     }
@@ -487,6 +617,11 @@ void ui_screens_sync_selection(void)
         return;
     }
     lv_roller_set_selected(s_roller, nav_get_selected_index(), LV_ANIM_ON);
+}
+
+void ui_screens_sync_cooking(void)
+{
+    sync_cooking_screen();
 }
 
 /* ---- デバッグ用プリセット選択画面 ----

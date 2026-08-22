@@ -32,6 +32,7 @@ typedef enum {
                         // sim_sound.cはUI_SOUND_DONEを「最後の音ID」として
                         // 配列サイズ・ループ境界に使っているため、新しい音を
                         // 追加するときは常にUI_SOUND_DONEの手前に挿入する。
+    UI_SOUND_READY,     // 調理中画面のカウントダウンが0になった瞬間
     UI_SOUND_DONE,      // 全パラメータ確定(一連の操作フロー完了)
 } ui_sound_id_t;
 

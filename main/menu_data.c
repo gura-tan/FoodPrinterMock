@@ -11,10 +11,15 @@ static const parameter_def_t k_params_taste[] = {
 };
 #define TASTE_PARAM_COUNT (sizeof(k_params_taste) / sizeof(k_params_taste[0]))
 
+/* 推定調理時間(分)のデモ用固定値。実データが決まっていないため全メニュー
+ * 共通のプレースホルダーにしている(menu_item_def_t.estimated_minutes参照)。 */
+#define DEMO_ESTIMATED_MINUTES 15
+
 /* 小カテゴリと同名のメニュー項目を1件だけ仮で持たせるためのマクロ */
 #define DEFINE_SINGLE_MENU(varname, label) \
     static const menu_item_def_t varname[] = { \
-        { .name = label, .parameters = k_params_taste, .parameter_count = TASTE_PARAM_COUNT }, \
+        { .name = label, .parameters = k_params_taste, .parameter_count = TASTE_PARAM_COUNT, \
+          .estimated_minutes = DEMO_ESTIMATED_MINUTES }, \
     }
 
 /* ================= 肉料理 ================= */

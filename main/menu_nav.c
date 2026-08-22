@@ -1,4 +1,5 @@
 #include "menu_nav.h"
+#include "lvgl.h" // lv_tick_get(): 調理中画面のカウントダウンに使う経過時間の基準
 #include <stdio.h>
 
 #define MAX_OPTIONS         32   // ローラーに並べる選択肢の最大数(数値レンジもここに収める)
@@ -64,6 +65,11 @@ static void refresh_options(void)
         for (size_t i = 0; i < s_option_count && i < MAX_OPTIONS; i++) {
             s_option_ptr[i] = sub->menu_items[i].name;
         }
+        break;
+    }
+    case NAV_LEVEL_COOKING: {
+        /* 調理中画面は「選択肢から選ぶ」モデルを使わないので、常に0件にしておく */
+        s_option_count = 0;
         break;
     }
     case NAV_LEVEL_PARAM: {
@@ -182,7 +188,12 @@ bool nav_confirm(void)
     case NAV_LEVEL_PARAM: {
         const menu_item_def_t *menu = current_menu_item();
         if (s_state.parameter_index >= (int)menu->parameter_count) {
-            /* STARTを確定 = 一連の操作フロー完了。値は持たないので何も保存しない */
+            /* STARTを確定: 調理中画面(カウントダウン)へ進む。DONE音は
+             * 従来どおりこの確定操作自体で鳴らす(戻り値trueで呼び出し側に
+             * 伝える)ので、ここでは鳴らさない。値は持たないので何も保存しない */
+            s_state.level = NAV_LEVEL_COOKING;
+            nav_cooking_start(menu->estimated_minutes * 60);
+            s_dirty = true;
             return true;
         }
 
@@ -195,6 +206,16 @@ bool nav_confirm(void)
 
         s_state.parameter_index++; // 次のパラメータ、またはSTART(parameter_index==parameter_count)へ
         s_dirty = true;
+        return false;
+    }
+    case NAV_LEVEL_COOKING: {
+        if (!nav_cooking_is_complete()) {
+            /* 実行中は決定操作の対象外。通常は呼び出し側(app_main.c/sim_main.c)
+             * がこの前段でPROCEED音を鳴らすだけになる。 */
+            return false;
+        }
+        /* 完了確認 = 一連の操作フロー終了。大カテゴリへ戻す(デモループ) */
+        nav_init();
         return false;
     }
     }
@@ -221,6 +242,14 @@ void nav_back(void)
         } else {
             s_state.level = NAV_LEVEL_MENU;
         }
+        s_dirty = true;
+        break;
+    case NAV_LEVEL_COOKING:
+        /* 調理中(実行中/完了後どちらでも)からのキャンセル: パラメータ調整
+         * 画面のSTARTの位置へ戻す。次にnav_confirm()でSTARTを確定すれば
+         * nav_cooking_start()が呼ばれ、カウントダウンは最初からやり直しになる。 */
+        s_state.level = NAV_LEVEL_PARAM;
+        s_state.parameter_index = (int)current_menu_item()->parameter_count;
         s_dirty = true;
         break;
     }
@@ -257,4 +286,83 @@ int32_t nav_get_param_live_value(int index)
         }
     }
     return s_param_values[index];
+}
+
+/* ---- 調理中画面(カウントダウン)のモデル状態 ----
+ * 実時間の経過はlv_tick_get()(BSP/SDL双方のLVGLティックソースに乗る、
+ * ポータブルな単調増加ミリ秒カウンタ)を基準に計算する。ダイヤルによる
+ * 早送り/巻き戻し(nav_cooking_adjust())も同じ残り時間(ms)を直接書き換える
+ * だけなので、実時間の経過と混ざっても矛盾なく動く。 */
+#define COOKING_DIAL_STEP_SEC  30  // ダイヤル1ノッチあたりの早送り/巻き戻し秒数(デモ用)
+
+typedef enum {
+    COOKING_PHASE_RUNNING = 0,
+    COOKING_PHASE_COMPLETE,
+} cooking_phase_t;
+
+static cooking_phase_t s_cooking_phase = COOKING_PHASE_COMPLETE; // 未開始時の既定値(無害化のため)
+static int32_t         s_cooking_total_sec;
+static int32_t         s_cooking_remaining_ms;
+static uint32_t        s_cooking_last_tick_ms;
+
+void nav_cooking_start(int32_t total_seconds)
+{
+    s_cooking_total_sec = (total_seconds > 0) ? total_seconds : 0;
+    s_cooking_remaining_ms = s_cooking_total_sec * 1000;
+    s_cooking_phase = (s_cooking_remaining_ms > 0) ? COOKING_PHASE_RUNNING : COOKING_PHASE_COMPLETE;
+    s_cooking_last_tick_ms = lv_tick_get();
+}
+
+bool nav_cooking_tick(void)
+{
+    if (s_cooking_phase != COOKING_PHASE_RUNNING) {
+        return false;
+    }
+    uint32_t now = lv_tick_get();
+    uint32_t elapsed_ms = now - s_cooking_last_tick_ms; // uint32のラップアラウンドを跨いでも差分は正しく出る
+    s_cooking_last_tick_ms = now;
+    s_cooking_remaining_ms -= (int32_t)elapsed_ms;
+    if (s_cooking_remaining_ms <= 0) {
+        s_cooking_remaining_ms = 0;
+        s_cooking_phase = COOKING_PHASE_COMPLETE;
+        return true; // 0に達した瞬間(呼び出し側のreadyサウンド再生トリガー用)
+    }
+    return false;
+}
+
+bool nav_cooking_adjust(int32_t delta)
+{
+    if (s_cooking_phase != COOKING_PHASE_RUNNING || delta == 0) {
+        return false; // 完了後はダイヤル操作を受け付けない(常に0のまま維持)
+    }
+    /* delta>0(他画面で選択を先へ進める向きと同じ)を「時間を減らす」方向に
+     * 割り当てる: デモで長い調理時間を早送りする用途を優先するため。 */
+    int32_t max_ms = s_cooking_total_sec * 1000;
+    int32_t new_ms = s_cooking_remaining_ms - delta * (COOKING_DIAL_STEP_SEC * 1000);
+    if (new_ms < 0) new_ms = 0;
+    if (new_ms > max_ms) new_ms = max_ms;
+    if (new_ms == s_cooking_remaining_ms) {
+        return false;
+    }
+    s_cooking_remaining_ms = new_ms;
+    if (s_cooking_remaining_ms <= 0) {
+        s_cooking_remaining_ms = 0;
+        s_cooking_phase = COOKING_PHASE_COMPLETE;
+    }
+    return true;
+}
+
+int32_t nav_cooking_remaining_seconds(void)
+{
+    return (s_cooking_remaining_ms + 999) / 1000; // 切り上げ: 0を最後の1秒だけ表示する
+}
+
+int32_t nav_cooking_total_seconds(void)
+{
+    return s_cooking_total_sec;
+}
+
+bool nav_cooking_is_complete(void)
+{
+    return s_cooking_phase == COOKING_PHASE_COMPLETE;
 }
