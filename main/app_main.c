@@ -52,6 +52,16 @@ static const char *TAG = "app_main";
 #define BOOT_HOLD_SAMPLE_COUNT        5
 #define BOOT_HOLD_SAMPLE_INTERVAL_MS 30
 
+/* 【おもちゃモード】ボタンを押しながらダイヤルを回すとトグルする。
+ * 画面には何も描画しない(バックライトを消灯するだけ)が、nav/soundの
+ * 処理自体は通常時と完全に同じまま動かし続ける(操作を受け付け、対応する
+ * 音を鳴らす)。押している間の累積回転量がこの数値に達した時点で
+ * 離す操作を待たずに確定させ、以後同じ押下中は再トグルしない
+ * (CANCEL_HOLD_MSの「戻る」長押しとは独立した別ジェスチャーとして扱う:
+ * 確定した場合はback_triggered_this_pressを立てて「戻る」長押し判定と
+ * 離した瞬間のPROCEED確定の両方を抑止する)。 */
+#define TOY_MODE_ROTATE_STEPS  4
+
 /* デバッグ用プリセット選択画面の一覧先頭に置く固定選択肢。選ぶとNVSの
  * デバッグ上書き設定を消去し、通常のSD preset.txt / defaultの挙動に戻す。 */
 static const char *const DEBUG_PICKER_RESET_LABEL = "(SDのpreset.txtに戻す)";
@@ -289,6 +299,11 @@ void app_main(void)
      * 演出中は一切更新せず凍結したままにしたいので、deny音を鳴らす
      * 判定専用にこちらで別途追跡する。 */
     bool deny_shadow_pressed = false;
+    /* 【おもちゃモード】TOY_MODE_ROTATE_STEPS参照。押下中の累積回転量と、
+     * 今の押下で既にトグル済みか(1回の押下で何度もトグルしないため)。 */
+    bool toy_mode_active = false;
+    int32_t toy_mode_rotate_accum = 0;
+    bool toy_mode_gesture_consumed_this_press = false;
 
     while (1) {
         if (ui_screens_transition_in_progress()) {
@@ -363,7 +378,34 @@ void app_main(void)
                 ((now - last_button_edge_tick) * portTICK_PERIOD_MS < BUTTON_DEBOUNCE_MS);
             bool debounced_button_pressed = within_button_debounce ? button_was_pressed : button_pressed;
 
-            if (delta != 0 && !within_jitter_guard && nav_get_state()->level == NAV_LEVEL_COOKING) {
+            /* 【おもちゃモード】ボタンが(前回ポーリング時点から引き続き)
+             * 押されている間のダイヤル回転は、通常の選択移動/早送りには
+             * 使わずおもちゃモードのトグル判定に回す。押し始めた直後の
+             * within_jitter_guard期間は従来通り無視する。 */
+            bool button_held_from_before = debounced_button_pressed && button_was_pressed;
+            if (button_held_from_before && !back_triggered_this_press &&
+                !toy_mode_gesture_consumed_this_press && delta != 0 && !within_jitter_guard) {
+                toy_mode_rotate_accum += (int32_t)delta;
+                if (toy_mode_rotate_accum >= TOY_MODE_ROTATE_STEPS ||
+                    toy_mode_rotate_accum <= -TOY_MODE_ROTATE_STEPS) {
+                    toy_mode_active = !toy_mode_active;
+                    toy_mode_gesture_consumed_this_press = true;
+                    back_triggered_this_press = true; // 通常の長押しBACK/PROCEEDを抑止
+                    /* バックライト消灯だけでは(パネルの特性上)うっすら表示が
+                     * 透けて見えてしまったため、黒いオーバーレイで完全に覆う
+                     * (ui_screens_set_toy_mode()参照)。バックライト自体も
+                     * 消灯しておくのは省電力目的の付随的なもの。 */
+                    bsp_display_lock(0);
+                    ui_screens_set_toy_mode(toy_mode_active);
+                    bsp_display_unlock();
+                    if (toy_mode_active) {
+                        bsp_display_backlight_off();
+                    } else {
+                        bsp_display_backlight_on();
+                    }
+                    sound_hooks_play(UI_SOUND_DONE);
+                }
+            } else if (delta != 0 && !within_jitter_guard && nav_get_state()->level == NAV_LEVEL_COOKING) {
                 /* 調理中画面ではダイヤルは選択移動ではなく残り時間の早送り/
                  * 巻き戻し(デモ用)。完了後はnav_cooking_adjust()側で常に
                  * 無効化されるので、ここではchangedの有無だけ見ればよい。 */
@@ -398,6 +440,8 @@ void app_main(void)
                 last_button_edge_tick = press_started_tick;
                 have_button_edge = true;
                 back_triggered_this_press = false;
+                toy_mode_rotate_accum = 0;
+                toy_mode_gesture_consumed_this_press = false;
             } else if (debounced_button_pressed && button_was_pressed && !back_triggered_this_press) {
                 /* 押され続けている間: 長押し時間(CANCEL_HOLD_MS)に達した瞬間、
                  * 離す操作を待たずにBACKを確定させる */

@@ -45,6 +45,15 @@ void ui_screens_show_debug_picker(const char *const *names, size_t count);
  * デバッグ画面版)。 */
 void ui_screens_debug_picker_set_selected(int index);
 
+/* 【おもちゃモード】true: 今どの画面(s_screen/s_param_screen/s_cooking_screen等)が
+ * 表示中でも構わず、最前面に不透明な黒いオーバーレイを重ねて何も見えない
+ * ようにする。false: オーバーレイを外し、下の画面をそのまま見せる。
+ * refresh/sync_selection/sync_cookingといった通常のnav同期呼び出しは
+ * 呼び出し側(app_main.c)がこれまで通り続けてよく(むしろ続けることで
+ * 「おもちゃモードを抜けた瞬間、今の状態が正しく表示される」を保証できる)、
+ * この関数はそれとは独立に見た目だけを隠す/戻すためのものとして働く。 */
+void ui_screens_set_toy_mode(bool active);
+
 #ifdef __cplusplus
 }
 #endif

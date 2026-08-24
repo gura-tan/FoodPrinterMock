@@ -396,6 +396,12 @@ static void show_cooking_screen(void)
 
 static lv_obj_t    *s_transition_mask;  // rollerと同じ位置/サイズ/角丸のクリッピング用コンテナ(自身は透明)
 static lv_obj_t    *s_transition_band;  // maskの子。角丸無しの単色矩形で、これの幅を動かす
+
+/* 【おもちゃモード】lv_layer_top()配下に置く画面全体サイズの不透明な黒。
+ * s_transition_mask/bandより後に作ることで、ワイプ演出中でも常にその上に
+ * 来るようにしてある(おもちゃモード中は長押し+回転のジェスチャー自体が
+ * ワイプ演出を発生させないが、念のため)。 */
+static lv_obj_t    *s_toy_overlay;
 static bool         s_transition_active;
 static bool         s_transition_reverse; // true: 戻る操作(右→左)、false: 決定操作(左→右)
 static nav_level_t  s_last_shown_level; // 直前にapply_refresh()で実際に表示した階層
@@ -583,9 +589,33 @@ void ui_screens_init(void)
     lv_obj_clear_flag(s_transition_band, LV_OBJ_FLAG_CLICKABLE);
     lv_obj_clear_flag(s_transition_band, LV_OBJ_FLAG_SCROLLABLE);
 
+    /* 【おもちゃモード】画面全体を覆う不透明な黒。lv_layer_top()に
+     * lv_pct(100)で置くことで、表示中の実画面(s_screen/s_param_screen/
+     * s_cooking_screen/s_debug_screen)がどれでも常に画面いっぱいを覆う。
+     * 初期状態では非表示にしておく。 */
+    s_toy_overlay = lv_obj_create(lv_layer_top());
+    lv_obj_remove_style_all(s_toy_overlay);
+    lv_obj_set_size(s_toy_overlay, lv_pct(100), lv_pct(100));
+    lv_obj_align(s_toy_overlay, LV_ALIGN_CENTER, 0, 0);
+    lv_obj_set_style_bg_color(s_toy_overlay, lv_color_hex(0x000000), 0);
+    lv_obj_set_style_bg_opa(s_toy_overlay, LV_OPA_COVER, 0);
+    lv_obj_clear_flag(s_toy_overlay, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_clear_flag(s_toy_overlay, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_add_flag(s_toy_overlay, LV_OBJ_FLAG_HIDDEN);
+
     lv_scr_load(s_screen); /* v9系では lv_screen_load() に読み替え可 */
 
     apply_refresh(); // 起動直後の初回表示はワイプ演出無しで即時反映する
+}
+
+void ui_screens_set_toy_mode(bool active)
+{
+    if (active) {
+        lv_obj_clear_flag(s_toy_overlay, LV_OBJ_FLAG_HIDDEN);
+        lv_obj_move_foreground(s_toy_overlay); // 万一他の最前面レイヤー要素より後ろに回っていた場合の保険
+    } else {
+        lv_obj_add_flag(s_toy_overlay, LV_OBJ_FLAG_HIDDEN);
+    }
 }
 
 void ui_screens_refresh(bool is_back)
