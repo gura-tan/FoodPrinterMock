@@ -13,7 +13,7 @@ static const parameter_def_t k_params_taste[] = {
 
 /* 推定調理時間(分)のデモ用固定値。実データが決まっていないため全メニュー
  * 共通のプレースホルダーにしている(menu_item_def_t.estimated_minutes参照)。 */
-#define DEMO_ESTIMATED_MINUTES 15
+#define DEMO_ESTIMATED_MINUTES 4
 
 /* 小カテゴリと同名のメニュー項目を1件だけ仮で持たせるためのマクロ */
 #define DEFINE_SINGLE_MENU(varname, label) \

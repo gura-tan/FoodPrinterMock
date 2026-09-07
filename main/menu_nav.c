@@ -293,7 +293,7 @@ int32_t nav_get_param_live_value(int index)
  * ポータブルな単調増加ミリ秒カウンタ)を基準に計算する。ダイヤルによる
  * 早送り/巻き戻し(nav_cooking_adjust())も同じ残り時間(ms)を直接書き換える
  * だけなので、実時間の経過と混ざっても矛盾なく動く。 */
-#define COOKING_DIAL_STEP_SEC  30  // ダイヤル1ノッチあたりの早送り/巻き戻し秒数(デモ用)
+#define COOKING_DIAL_STEP_SEC  10  // ダイヤル1ノッチあたりの早送り/巻き戻し秒数(デモ用)
 
 typedef enum {
     COOKING_PHASE_RUNNING = 0,

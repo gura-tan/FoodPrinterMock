@@ -411,7 +411,9 @@ void app_main(void)
                  * 無効化されるので、ここではchangedの有無だけ見ればよい。 */
                 bool changed = nav_cooking_adjust(delta);
                 bool now_complete = nav_cooking_is_complete();
-                sound_hooks_play(!changed ? UI_SOUND_DENY : (now_complete ? UI_SOUND_READY : UI_SOUND_MOVE_PARAM));
+                if(now_complete){
+                  sound_hooks_play(!changed ? UI_SOUND_DENY : (now_complete ? UI_SOUND_READY : UI_SOUND_MOVE_PARAM));
+                } //三項演算子の最適な処理が分からなかったので仮。タイマー中の操作は音が鳴らないように
                 bsp_display_lock(0);
                 ui_screens_sync_cooking();
                 bsp_display_unlock();
