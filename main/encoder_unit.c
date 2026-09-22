@@ -1,6 +1,8 @@
 #include "encoder_unit.h"
 #include "driver/i2c_master.h"
 #include "esp_log.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
 
 static const char *TAG = "encoder_unit";
 
@@ -18,6 +20,21 @@ static const char *TAG = "encoder_unit";
  * s_raw_delta_carryに繰り越し、次回のread()と合算してからステップ数に
  * 変換する(取りこぼし・重複カウントを防ぐ)。 */
 #define ENCODER_RAW_TICKS_PER_STEP 2
+
+/* 【2026/09追記・実機確認】起動直後、AXP2101のPort.A電源レールがまだ
+ * 安定していないタイミングで初回のカウンタ読み出しを行うと、
+ * i2c_master_transmit_receive()がESP_ERR_INVALID_STATE等で失敗することを
+ * 実機で確認した(sd_storage.cのbsp_sdcard_sdspi_mount()で見つかった
+ * 電源安定待ちの問題と同種。SD_MOUNT_SETTLE_DELAY_MS/RETRY_COUNT参照)。
+ * BSPのbsp_feature_tにはPort.A/B(Grove)用の電源有効化フラグが無く
+ * (BSP_FEATURE_SD/LCD/TOUCH/SPEAKER/MIC/CAMERA/USBのみ)、明示的に
+ * 有効化する手段が無いため、短い安定待ち+数回のリトライで自己回復させる。
+ * ただし基板側の電源シーケンス自体が「USB接続だけでは電源が入らず、
+ * PWRボタンを押すまでGroveの5Vが供給されない」状態の場合はリトライでも
+ * 解決しない(その場合は電源投入のやり直しが必要)。 */
+#define ENCODER_INIT_SETTLE_DELAY_MS  50
+#define ENCODER_INIT_RETRY_COUNT       3
+#define ENCODER_INIT_RETRY_DELAY_MS  150
 
 static i2c_master_bus_handle_t s_bus;
 static i2c_master_dev_handle_t s_dev;
@@ -72,11 +89,27 @@ esp_err_t encoder_init(void)
         return err;
     }
 
-    /* 起動直後のカウンタ値を基準値として読み、以降はdeltaだけを返す */
+    /* 起動直後のカウンタ値を基準値として読み、以降はdeltaだけを返す。
+     * 電源レール安定待ち+リトライについては上のENCODER_INIT_*のコメント参照。 */
+    vTaskDelay(pdMS_TO_TICKS(ENCODER_INIT_SETTLE_DELAY_MS));
+
     int32_t raw = 0;
-    err = read_counter_raw(&raw);
+    err = ESP_FAIL;
+    for (int attempt = 1; attempt <= ENCODER_INIT_RETRY_COUNT; attempt++) {
+        err = read_counter_raw(&raw);
+        if (err == ESP_OK) {
+            break;
+        }
+        ESP_LOGW(TAG, "initial counter read attempt %d/%d failed: %s",
+                 attempt, ENCODER_INIT_RETRY_COUNT, esp_err_to_name(err));
+        if (attempt < ENCODER_INIT_RETRY_COUNT) {
+            vTaskDelay(pdMS_TO_TICKS(ENCODER_INIT_RETRY_DELAY_MS));
+        }
+    }
     if (err != ESP_OK) {
-        ESP_LOGE(TAG, "initial counter read failed: %s", esp_err_to_name(err));
+        ESP_LOGE(TAG, "initial counter read failed after %d attempts: %s "
+                      "(未接続、または電源レールがまだ安定していない可能性。PWRボタンでの電源再投入も試してほしい)",
+                 ENCODER_INIT_RETRY_COUNT, esp_err_to_name(err));
         return err;
     }
     s_last_counter = raw;

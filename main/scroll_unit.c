@@ -1,9 +1,22 @@
 #include "scroll_unit.h"
 #include "soft_i2c.h"
 #include "esp_log.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
 #include <stdio.h>
 
 static const char *TAG = "scroll_unit";
+
+/* 【2026/09追記・実機確認】encoder_unit.cのENCODER_INIT_*と同じ理由
+ * (AXP2101電源レールの安定待ち)で、初回のカウンタ読み出しに安定待ち+
+ * リトライを入れる。soft_i2c_write_read()は失敗のたびに内部でバスクリア
+ * するため、ここでの再試行は純粋に「デバイスがまだ応答できる状態に
+ * なっていない」ケースを吸収するためのもの。基板側の電源シーケンス自体が
+ * 「USB接続だけでは電源が入らず、PWRボタンを押すまでGroveの5Vが供給されない」
+ * 状態の場合はリトライでも解決しない(その場合は電源投入のやり直しが必要)。 */
+#define SCROLL_INIT_SETTLE_DELAY_MS  50
+#define SCROLL_INIT_RETRY_COUNT       3
+#define SCROLL_INIT_RETRY_DELAY_MS  150
 
 /* ---- バスアクセス層 ----
  * このドライバがI2Cに触れるのは、この2つのstatic関数だけ。将来I2Cハブで
@@ -47,15 +60,28 @@ esp_err_t scroll_init(void)
     }
     s_bus_ready = true;
 
+    /* 電源レール安定待ち+リトライについては上のSCROLL_INIT_*のコメント参照。 */
+    vTaskDelay(pdMS_TO_TICKS(SCROLL_INIT_SETTLE_DELAY_MS));
+
     int16_t counter = 0;
-    err = read_counter16(&counter);
+    err = ESP_FAIL;
+    for (int attempt = 1; attempt <= SCROLL_INIT_RETRY_COUNT; attempt++) {
+        err = read_counter16(&counter);
+        if (err == ESP_OK) {
+            break;
+        }
+        if (attempt < SCROLL_INIT_RETRY_COUNT) {
+            vTaskDelay(pdMS_TO_TICKS(SCROLL_INIT_RETRY_DELAY_MS));
+        }
+    }
     if (err != ESP_OK) {
         /* 未接続は正常な使い方なのでERRORにはしない。ただし接続しているのに
          * ここに来る場合は、Port.Bの5V供給/配線(黄=SDA,白=SCL)/プルアップ/
          * レジスタアドレス(SCROLL_REG_COUNTER)を疑うこと。 */
-        ESP_LOGW(TAG, "initial counter read failed: %s "
-                      "(未接続、または配線/5V供給/プルアップ/レジスタ配置が想定と違う可能性)",
-                 esp_err_to_name(err));
+        ESP_LOGW(TAG, "initial counter read failed after %d attempts: %s "
+                      "(未接続、電源レールがまだ安定していない、または配線/5V供給/"
+                      "プルアップ/レジスタ配置が想定と違う可能性)",
+                 SCROLL_INIT_RETRY_COUNT, esp_err_to_name(err));
         return err;
     }
 
