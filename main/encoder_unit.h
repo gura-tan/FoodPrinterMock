@@ -14,6 +14,15 @@ extern "C" {
  * bsp_i2c_init()で自動初期化する内部I2Cバス(SDA=GPIO12/SCL=GPIO11)とは
  * 別バスなので、ここで独自にI2Cバスを初期化している。
  *
+ * 【ハードI2Cの割り当て(2026/09〜)】
+ * ESP32-S3のハードI2Cコントローラは2つだけ(CONFIG_SOC_I2C_NUM=2)。
+ *   I2C_NUM_1 : BSPの内部バス(GPIO11/12)。CONFIG_BSP_I2C_NUM=1で固定
+ *   I2C_NUM_0 : このドライバ(Port.AのEncoder)。encoder_init()で明示的に固定
+ * 以前はi2c_port=-1(自動選択)だったが、BSPとの取り合いを避けるためI2C_NUM_0に
+ * 固定した。3本目のハードI2Cは作れないため、Port.BのUnit Scroll(U186)は
+ * ソフトウェアI2C(soft_i2c.c / scroll_unit.c)で動かしている。
+ * PortAとPortBは別バスなので、同じI2Cアドレス0x40でも衝突しない。
+ *
  * 【実機で検証済み(2026/07)】
  * - ボタン: レジスタ0x20, 1byte, 0=押されている / 1=離されている
  * - 回転 : レジスタ0x10, 2byte(リトルエンディアン, 符号付き16bit)の

@@ -2,10 +2,21 @@
  * main/以下のUIロジック(menu_nav.c / ui_screens.c)をそのままPC/ブラウザ上で動かす
  * ためのエントリポイント。実機のロータリーエンコーダー+ボタンの代わりに
  * キーボードで操作する:
- *   ←/↑ : 選択を1つ戻す (encoder delta -1)
- *   →/↓ : 選択を1つ進める (encoder delta +1)
+ *   ←/↑ : Encoder側の選択を1つ戻す (delta -1)
+ *   →/↓ : Encoder側の選択を1つ進める (delta +1)
+ *   W   : Scroll側の選択を1つ戻す (delta -1)
+ *   S   : Scroll側の選択を1つ進める (delta +1)
  *   Enter: 決定 (nav_confirm)
  *   Esc / Backspace: キャンセル/戻る (nav_back)
+ *
+ * 【Unit Scroll対応について】
+ * simは実機のような「入力ごとに独立したボタン」を持たない(キーボードには
+ * Encoder用/Scroll用の別々の押しボタンが無く、決定/戻るはEnter/Escで共通)。
+ * そのためsimが再現するのは「どちらの入力で回転させたかによってMoveCat/
+ * MovePrmの音が変わる」という、この試作機の研究テーマの核心部分だけであり、
+ * 実機のper-source状態(デバウンス/ジッタガード/長押し判定/おもちゃモードの
+ * 累積回転)はsimには存在しない(元々arrow keysにも実装されていなかった)。
+ * nav/画面遷移の状態は実機と同じくEncoder/Scrollで共有する。
  *
  * app_main.c(実機版)の該当ループと同じ呼び出し順を踏襲しているが、
  * デバウンス/長押し判定/NVS/SDカードといった実機固有の処理は含めていない
@@ -19,6 +30,7 @@
 
 #include "menu_nav.h"
 #include "ui_screens.h"
+#include "input_source.h"
 #include "sound_hooks.h"
 
 #include <stdio.h>
@@ -31,6 +43,26 @@
 
 #define SIM_LCD_H_RES 320
 #define SIM_LCD_V_RES 240
+
+/* Encoder/Scroll共通の回転処理。実機のprocess_input()と同じ分岐
+ * (調理中画面は早送り/巻き戻し、それ以外は選択移動)をキーボード用に
+ * 簡略化したもの。音だけがsrcによって変わる(sound_hooks_play_from参照)。 */
+static void handle_rotation(int32_t delta, input_source_t src)
+{
+    if (nav_get_state()->level == NAV_LEVEL_COOKING) {
+        /* 調理中画面ではダイヤルは選択移動ではなく残り時間の早送り/
+         * 巻き戻し(デモ用)。app_main.c側と同じ割り当て。 */
+        bool changed = nav_cooking_adjust(delta);
+        bool now_complete = nav_cooking_is_complete();
+        sound_hooks_play_from(!changed ? UI_SOUND_DENY : (now_complete ? UI_SOUND_READY : UI_SOUND_MOVE_PARAM), src);
+        ui_screens_sync_cooking();
+    } else {
+        bool moved = nav_move_selection(delta);
+        bool on_param_screen = nav_get_state()->level == NAV_LEVEL_PARAM;
+        sound_hooks_play_from(moved ? (on_param_screen ? UI_SOUND_MOVE_PARAM : UI_SOUND_MOVE_CATEGORY) : UI_SOUND_DENY, src);
+        ui_screens_sync_selection();
+    }
+}
 
 static void key_event_cb(lv_event_t *e)
 {
@@ -46,42 +78,29 @@ static void key_event_cb(lv_event_t *e)
     uint32_t key = lv_event_get_key(e);
     switch (key) {
     case LV_KEY_LEFT:
-    case LV_KEY_UP: {
-        if (nav_get_state()->level == NAV_LEVEL_COOKING) {
-            /* 調理中画面ではダイヤルは選択移動ではなく残り時間の早送り/
-             * 巻き戻し(デモ用)。app_main.c側と同じ割り当て。 */
-            bool changed = nav_cooking_adjust(-1);
-            bool now_complete = nav_cooking_is_complete();
-            sound_hooks_play(!changed ? UI_SOUND_DENY : (now_complete ? UI_SOUND_READY : UI_SOUND_MOVE_PARAM));
-            ui_screens_sync_cooking();
-        } else {
-            bool moved = nav_move_selection(-1);
-            bool on_param_screen = nav_get_state()->level == NAV_LEVEL_PARAM;
-            sound_hooks_play(moved ? (on_param_screen ? UI_SOUND_MOVE_PARAM : UI_SOUND_MOVE_CATEGORY) : UI_SOUND_DENY);
-            ui_screens_sync_selection();
-        }
+    case LV_KEY_UP:
+        handle_rotation(-1, INPUT_SRC_ENCODER);
         break;
-    }
     case LV_KEY_RIGHT:
-    case LV_KEY_DOWN: {
-        if (nav_get_state()->level == NAV_LEVEL_COOKING) {
-            bool changed = nav_cooking_adjust(1);
-            bool now_complete = nav_cooking_is_complete();
-            sound_hooks_play(!changed ? UI_SOUND_DENY : (now_complete ? UI_SOUND_READY : UI_SOUND_MOVE_PARAM));
-            ui_screens_sync_cooking();
-        } else {
-            bool moved = nav_move_selection(1);
-            bool on_param_screen = nav_get_state()->level == NAV_LEVEL_PARAM;
-            sound_hooks_play(moved ? (on_param_screen ? UI_SOUND_MOVE_PARAM : UI_SOUND_MOVE_CATEGORY) : UI_SOUND_DENY);
-            ui_screens_sync_selection();
-        }
+    case LV_KEY_DOWN:
+        handle_rotation(1, INPUT_SRC_ENCODER);
         break;
-    }
+    case 'w':
+    case 'W':
+        handle_rotation(-1, INPUT_SRC_SCROLL);
+        break;
+    case 's':
+    case 'S':
+        handle_rotation(1, INPUT_SRC_SCROLL);
+        break;
     case LV_KEY_ENTER: {
         /* キーボードには実機のような押す/離すの区別が無いため、1回の
          * Enterで「押した瞬間(HIT)→短押しで離した瞬間(PROCEED/DONE)」を
          * 続けて鳴らす(sound_hooks_play()は即時割り込み版なので、HITは
          * すぐPROCEED/DONEに打ち切られてつながる。実機の短押しと同じ)。
+         * 決定/戻るはEncoder/Scroll共通の操作として扱う(実機のような
+         * per-sourceボタンがキーボードには無いため)ので、常にENCODER扱いで
+         * よい(HIT/PROCEED/DONE/BACKは入力によらず共通の音)。
          * nav_confirm()の戻り値=trueは「START確定」の合図であり、状態遷移
          * (調理中画面へ進む/完了確認で大カテゴリへ戻す)はnav_confirm()
          * 自身が内部で行う(main/menu_nav.c参照)。 */
@@ -149,7 +168,8 @@ int main(void)
     nav_init();
     ui_screens_init();
 
-    printf("FoodPrinterMock UI simulator: arrows=move, Enter=confirm, Esc/Backspace=back\n");
+    printf("FoodPrinterMock UI simulator: arrows=Encoder move, W/S=Scroll move, "
+           "Enter=confirm, Esc/Backspace=back\n");
 
 #if defined(__EMSCRIPTEN__)
     emscripten_set_main_loop(loop_iter, 0, 1);

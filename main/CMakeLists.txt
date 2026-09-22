@@ -5,6 +5,9 @@ idf_component_register(
         "menu_nav.c"
         "ui_screens.c"
         "encoder_unit.c"
+        "scroll_unit.c"
+        "soft_i2c.c"
+        "input_hub.c"
         "sound_hooks.c"
         "sd_storage.c"
         "debug_preset.c"
@@ -20,6 +23,8 @@ idf_component_register(
         lvgl               # lv_* 一式
         esp_codec_dev      # esp_codec_dev_open/write/close/set_out_vol
         nvs_flash          # デバッグ用プリセット選択の保存(debug_preset.c)
+        esp_driver_gpio    # soft_i2c.c: gpio_config/gpio_set_level/gpio_get_level (Unit Scroll用ソフトI2C)
+        esp_rom            # soft_i2c.c: esp_rom_delay_us (busy-waitによるI2Cタイミング生成)
 )
 
 # 【変更点】UI音声はSDカード(/sdcard/sounds/...)から読み込む方式に変更したため、

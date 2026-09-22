@@ -8,26 +8,58 @@
 │                             無ければ "default" を使う)
 └── sounds/
     └── default/             (sound_preset.txt の中身、省略時は "default")
-        ├── hit.wav          (ボタンを押した瞬間の音)
-        ├── proceed.wav      (ボタンを離した瞬間=決定操作の音。旧
-        │                     button.wav+confirm.wavを統合したもの。
+        ├── hit.wav          (ボタンを押した瞬間の音。Encoder/Scroll共通)
+        ├── proceed.wav      (ボタンを離した瞬間=決定操作の音。Encoder/Scroll共通。
         │                     再生中のhit.wavを打ち切って鳴るため、
         │                     hit→proceedで一つのフレーズになるように
         │                     作ること)
-        ├── movecat.wav      (カテゴリ/メニュー選択画面で選択項目が変わった音)
-        ├── moveprm.wav      (パラメーター調整画面で選択項目が変わった音)
-        ├── back.wav
+        ├── emovecat.wav     (【Encoder用】カテゴリ/メニュー選択画面で
+        │                     選択項目が変わった音)
+        ├── emoveprm.wav     (【Encoder用】パラメーター調整画面で
+        │                     選択項目が変わった音)
+        ├── smovecat.wav     (【Scroll用】カテゴリ/メニュー選択画面で
+        │                     選択項目が変わった音)
+        ├── smoveprm.wav     (【Scroll用】パラメーター調整画面で
+        │                     選択項目が変わった音)
+        ├── movecat.wav      (【互換用】emovecat/smovecatが無いときの
+        │                     フォールバック。旧バージョンとの互換のために残してある)
+        ├── moveprm.wav      (【互換用】emoveprm/smoveprmが無いときの
+        │                     フォールバック)
+        ├── back.wav         (Encoder/Scroll共通)
         ├── deny.wav         (操作しても何も変化が起きなかったことを伝える音。
         │                     画面遷移の演出中の入力や、リストの端で範囲外
-        │                     方向へダイヤルを回した場合などに鳴る)
-        ├── ready.wav        (調理中画面のカウントダウンが0になった瞬間の音)
-        └── done.wav
+        │                     方向へダイヤルを回した場合などに鳴る。
+        │                     Encoder/Scroll共通)
+        ├── ready.wav        (調理中画面のカウントダウンが0になった瞬間の音。共通)
+        └── done.wav         (共通)
 ```
 
-プリセットを切り替えたいときは `/sounds/` の下に別名のフォルダ
-(例: `sounds/soft/`)を用意し、`sound_preset.txt` の中身を `soft` に
-書き換える。現状は**起動時に1回だけ**読むので、切り替えには再起動が必要
-(実行中のホットリロードは未実装、将来のタスク候補)。
+## 【Unit Scroll追加に伴う変更】入力ごとの音の区別
+
+この試作機はUnit Encoder(Port.A)とUnit Scroll(Port.B)のどちらからでも
+同じように操作できる。研究の主題である「入力機構ごとに音が操作感を
+どう変えるか」を比較できるよう、**カテゴリ/メニュー移動とパラメータ移動の音
+(MoveCat/MovePrm)だけ**、操作した入力ごとに別のwavを鳴らせるようにしてある。
+hit/proceed/back/deny/ready/doneはどちらの入力で操作しても共通の音。
+
+### フォールバックの順序
+
+ファイルが見つからない場合、次の順で探し、最初に読み込めたものを使う
+(見つからなかったこと自体はエラー扱いではなく、起動ログにINFOで出るだけ):
+
+- **Encoder**: `emovecat.wav` → 従来の `movecat.wav`
+  (MovePrmは `emoveprm.wav` → `moveprm.wav`)
+- **Scroll**: `smovecat.wav` → `emovecat.wav` → 従来の `movecat.wav`
+  (MovePrmは `smoveprm.wav` → `emoveprm.wav` → `moveprm.wav`)
+
+つまり、`movecat.wav`/`moveprm.wav`しか置いていない従来のSDカードでも
+そのまま動く(Encoder/Scrollとも同じ音が鳴る)。`emovecat.wav`/`emoveprm.wav`
+だけ追加すれば、Scrollもそれを使う(専用のsmovecat/smoveprmが無い間は
+Encoder用の音を借りる)。4つ全部揃えて初めて、入力ごとに完全に別の音になる。
+
+従来の`movecat.wav`/`moveprm.wav`は、対応する新ファイル(`emovecat.wav`/
+`emoveprm.wav`)が既にあるときは読み込まれない(起動時のヒープ消費を
+二重にしないため)。
 
 ## WAVファイルの要件
 
@@ -77,9 +109,10 @@ SDカードの `preset.txt` を書き換えなくても、`idf.py build && idf.p
 
 ### 検証用: 実機上でボタン長押しからプリセットを選ぶ(デバッグ選択画面)
 
-再フラッシュせずに実機だけでプリセットを選び直したい場合は、**エンコーダーの
-ボタンを押したまま電源を入れる(またはリセットする)**と、通常のメニューの
-代わりに `/sdcard/sounds/` 直下のフォルダ名一覧が選択画面に表示される。
+再フラッシュせずに実機だけでプリセットを選び直したい場合は、**Encoderまたは
+Scroll、どちらか一方のボタンを押したまま電源を入れる(またはリセットする)**と、
+通常のメニューの代わりに `/sdcard/sounds/` 直下のフォルダ名一覧が選択画面に
+表示される。選択画面自体もEncoder/Scrollどちらの回転・ボタンでも操作でき、
 ダイヤルで選び、ボタンを短押しして離すと確定し、自動的に再起動する。
 次回起動(ボタンを押さない通常起動)からは選んだプリセットが使われる。
 
@@ -94,8 +127,14 @@ SDカードの `preset.txt` を書き換えなくても、`idf.py build && idf.p
 
 ## ファイルが無い/壊れている場合
 
-そのIDの音だけが無効になり(起動ログにWARNINGが出る)、他の音や画面遷移
-自体は問題なく動作を続ける(EMBED_FILES版のときと同じ挙動)。
+- hit/proceed/back/deny/ready/done: そのIDの音だけが無効になり
+  (起動ログにWARNINGが出る)、他の音や画面遷移自体は問題なく動作を続ける。
+- emovecat/emoveprm/smovecat/smoveprm: 見つからなくてもWARNINGではなく
+  INFOログで済む(フォールバックがあるため異常ではない)。
+- movecat/moveprm(従来ファイル): 対応するemove系がある場合は最初から
+  読み込まないので、無くてもINFOログのみ。emove系も無く、movecat/moveprm
+  も無い場合は、そのMoveCat/MovePrmはどの入力からでも無音になる
+  (起動ログにWARNINGが出る)。
 
 ## 容量について
 

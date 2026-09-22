@@ -41,7 +41,14 @@ static esp_err_t read_counter_raw(int32_t *out_raw)
 esp_err_t encoder_init(void)
 {
     i2c_master_bus_config_t bus_cfg = {
-        .i2c_port = -1, // 空いているポートを自動選択
+        /* 【2026/09 変更】以前は-1(空いているポートを自動選択)だったが、
+         * ハードI2Cを I2C_NUM_0 に固定した。ESP32-S3のハードI2Cは2つ
+         * (I2C_NUM_0/1)だけで、BSPの内部バス(GPIO11/12)は
+         * CONFIG_BSP_I2C_NUM=1 = I2C_NUM_1 を固定で使う。自動選択に任せると
+         * 初期化順によってはBSPと同じコントローラを取り合う恐れがあるため、
+         * 空いている側(I2C_NUM_0)を明示する。Unit Scroll(Port.B)は
+         * ハードI2Cが残っていないのでソフトウェアI2C(soft_i2c.c)で動かしている。 */
+        .i2c_port = I2C_NUM_0,
         .sda_io_num = ENCODER_PORTA_SDA_GPIO,
         .scl_io_num = ENCODER_PORTA_SCL_GPIO,
         .clk_source = I2C_CLK_SRC_DEFAULT,
