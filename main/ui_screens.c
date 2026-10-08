@@ -8,6 +8,32 @@
 #include <stdio.h>
 
 /*
+ * 【UI_SCALE(発表資料用の高解像度スクリーンショット対応)】
+ * 実機ビルドではUI_SCALEは未定義(=1)で、従来と完全に同じ寸法・フォント・
+ * アイコンになる。simのビルドだけがUI_SCALE=4を定義し、すべての寸法を4倍
+ * (320x240 -> 1280x960)にして、フォントも56px版(sim/font_ja_menu_56.c)、
+ * アイコンも4倍版(sim/sim_hires_assets.c)に差し替えて描画する。
+ * 寸法の値(PX(...)の中身)は常に「実機の1倍での値」で書くこと。
+ */
+#ifndef UI_SCALE
+#define UI_SCALE 1
+#endif
+#if UI_SCALE != 1 && UI_SCALE != 4
+#error "UI_SCALE must be 1 or 4 (hi-res font/icon assets exist for 4 only)"
+#endif
+#define PX(v) ((v) * UI_SCALE)
+
+#if UI_SCALE == 1
+#define UI_FONT_JA   (&font_ja_menu_14)
+#define UI_ICON_SALT (&icon_salt)
+#else
+LV_FONT_DECLARE(font_ja_menu_56);
+const lv_image_dsc_t *ui_hires_icon_salt(void); /* sim/sim_hires_assets.c */
+#define UI_FONT_JA   (&font_ja_menu_56)
+#define UI_ICON_SALT (ui_hires_icon_salt())
+#endif
+
+/*
  * SquareLine Studioは使わず、LVGLのC APIを直接呼んで組んでいる。
  *
  * 注意(要確認): lv_scr_load() / lv_screen_load() や一部のスタイルAPIは
@@ -69,14 +95,14 @@ static void build_roller_options_string(char *buf, size_t buf_size)
  * アイコンはA8(アルファのみ)フォーマットなのでimage_recolorスタイルの色が
  * そのまま塗り色になり、円のアクセントカラーと自動的に揃う。 */
 
-#define GAUGE_SCREEN_W        320   // BSP_LCD_H_RES (main/CMakeLists.txtが依存するm5stack_core_s3のBSP値と一致)
+#define GAUGE_SCREEN_W        PX(320)   // BSP_LCD_H_RES (main/CMakeLists.txtが依存するm5stack_core_s3のBSP値と一致)
 #define GAUGE_MAX_SLOTS         4   // パラメータ数+1(START)の実用上の上限。320px幅で窮屈にならない範囲
 /* 320px幅を3分割(約106px/枠)した中に収める円の直径。線幅の分だけ見た目の
  * 外接円はこれより一回り大きくなるので、隣同士がくっつかない値にしてある
  * (実機で見て詰まって見えるようなら調整すること)。 */
-#define GAUGE_DIAMETER         88
-#define GAUGE_ARC_WIDTH         8
-#define GAUGE_Y_OFFSET         14   // タイトルの下に少し余裕を持たせる
+#define GAUGE_DIAMETER         PX(88)
+#define GAUGE_ARC_WIDTH         PX(8)
+#define GAUGE_Y_OFFSET         PX(14)   // タイトルの下に少し余裕を持たせる
 #define GAUGE_ANGLE_BG_START  270   // 12時ちょうど(0deg=3時, 90deg=6時, 180deg=9時, 270deg=12時)
 #define GAUGE_ANGLE_BG_END    (GAUGE_ANGLE_BG_START - 1) // 359°スイープ(実質1周、コメント参照)
 #define GAUGE_COLOR_ACTIVE  0x66b3ff  // 操作中の円のアクセントカラー(暗背景での輝度コントラストを上げるため明るめの青に調整)
@@ -85,7 +111,7 @@ static void build_roller_options_string(char *buf, size_t buf_size)
 /* 円の下に出す補足キャプション(「量」「味の濃さ」「推定: x min」)。操作中の円の
  * ものだけを表示し、他は隠すことで同時に1つしか出ないようにする(sync_param_gauges参照)。
  * START側の所要時間はまだ算出ロジックが無いため、デモ用の固定プレースホルダー値。 */
-#define GAUGE_CAPTION_Y_OFFSET (GAUGE_Y_OFFSET + GAUGE_DIAMETER / 2 + 12)
+#define GAUGE_CAPTION_Y_OFFSET (GAUGE_Y_OFFSET + GAUGE_DIAMETER / 2 + PX(12))
 
 /* 塩味パラメータだけアイコン表示にする対応づけ。将来アイコン付きパラメータが
  * 増えたらparameter_def_tにアイコン参照フィールドを足す形に切り替えてよいが、
@@ -114,7 +140,7 @@ static void build_param_gauges(const menu_item_def_t *menu)
 
     s_param_title_label = lv_label_create(s_param_screen);
     lv_obj_set_style_text_color(s_param_title_label, lv_color_hex(0xffffff), 0);
-    lv_obj_align(s_param_title_label, LV_ALIGN_TOP_MID, 0, 10);
+    lv_obj_align(s_param_title_label, LV_ALIGN_TOP_MID, 0, PX(10));
     lv_label_set_text(s_param_title_label, level_title(NAV_LEVEL_PARAM));
 
     size_t param_count = menu->parameter_count;
@@ -179,7 +205,7 @@ static void build_param_gauges(const menu_item_def_t *menu)
 
             if (strcmp(p->name, ICON_PARAM_NAME_SALT) == 0) {
                 lv_obj_t *icon = lv_image_create(circle);
-                lv_image_set_src(icon, &icon_salt);
+                lv_image_set_src(icon, UI_ICON_SALT);
                 lv_obj_center(icon);
                 s_gauge_slots[i].icon = icon;
             } else {
@@ -264,8 +290,8 @@ static void show_param_gauges(void)
  * opacityをlv_animで往復させることでフェードイン/アウトを繰り返す。
  * メニューによって構成が変わるパラメータゲージ画面と違い中身が固定なので、
  * (build_param_gauges()のような遅延構築はせず)ui_screens_init()で一度だけ作る。 */
-#define COOKING_DIAMETER      170
-#define COOKING_ARC_WIDTH      14
+#define COOKING_DIAMETER      PX(170)
+#define COOKING_ARC_WIDTH      PX(14)
 #define COOKING_ANGLE_START   270  // ゲージ画面と同じく12時起点
 #define COOKING_ANGLE_END     (COOKING_ANGLE_START - 1) // 359°スイープ(理由はbuild_param_gauges()のコメント参照)
 #define COOKING_FADE_MS       700  // 完了後フェードイン/アウト片道の時間
@@ -310,7 +336,7 @@ static void build_cooking_screen(void)
 {
     s_cooking_screen = lv_obj_create(NULL);
     lv_obj_set_style_bg_color(s_cooking_screen, lv_color_hex(0x101010), 0);
-    lv_obj_set_style_text_font(s_cooking_screen, &font_ja_menu_14, 0);
+    lv_obj_set_style_text_font(s_cooking_screen, UI_FONT_JA, 0);
 
     lv_obj_t *circle = lv_arc_create(s_cooking_screen);
     lv_obj_set_size(circle, COOKING_DIAMETER, COOKING_DIAMETER);
@@ -542,16 +568,16 @@ void ui_screens_init(void)
      * 双方に効く。デフォルトの CONFIG_LV_FONT_SOURCE_HAN_SANS_SC_14_CJK は
      * 簡体字中国語向けの字形セットで「揚」「麺」等が欠けていたための対応
      * (詳細は main/fonts/font_ja_menu_14.h 参照)。 */
-    lv_obj_set_style_text_font(s_screen, &font_ja_menu_14, 0);
+    lv_obj_set_style_text_font(s_screen, UI_FONT_JA, 0);
 
     s_title_label = lv_label_create(s_screen);
     lv_obj_set_style_text_color(s_title_label, lv_color_hex(0xffffff), 0);
-    lv_obj_align(s_title_label, LV_ALIGN_TOP_MID, 0, 10);
+    lv_obj_align(s_title_label, LV_ALIGN_TOP_MID, 0, PX(10));
 
     s_roller = lv_roller_create(s_screen);
     lv_roller_set_visible_row_count(s_roller, 4);
-    lv_obj_set_width(s_roller, 260);
-    lv_obj_align(s_roller, LV_ALIGN_CENTER, 0, 10);
+    lv_obj_set_width(s_roller, PX(260));
+    lv_obj_align(s_roller, LV_ALIGN_CENTER, 0, PX(10));
 
     /* 試作0はU135エンコーダーのみで操作する方針のため、タッチでの
      * ドラッグ選択は無効化し、表示位置は常にnav側の選択インデックスに
@@ -563,7 +589,7 @@ void ui_screens_init(void)
      * (デバッグ選択画面と同じ遅延生成方針)。 */
     s_param_screen = lv_obj_create(NULL);
     lv_obj_set_style_bg_color(s_param_screen, lv_color_hex(0x101010), 0);
-    lv_obj_set_style_text_font(s_param_screen, &font_ja_menu_14, 0);
+    lv_obj_set_style_text_font(s_param_screen, UI_FONT_JA, 0);
 
     /* 調理中画面(カウントダウン)。パラメータゲージ画面と違いメニューに
      * よって構成が変わらない(円1つ+ラベルのみ)ため、遅延構築せずここで
@@ -654,6 +680,16 @@ void ui_screens_sync_cooking(void)
     sync_cooking_screen();
 }
 
+void ui_screens_prepare_capture(void)
+{
+    /* 完了後のフェード(不透明度30%〜100%の往復)の途中で撮ると薄い状態で
+     * 保存されてしまうため、撮影の直前だけ不透明に戻す。アニメ自体は止めない
+     * ので、次のフレームで自然に元の往復へ戻る(撮影はこの直後に同期的に行う)。 */
+    if (s_cooking_pulse_active) {
+        lv_obj_set_style_arc_opa(s_cooking_circle, LV_OPA_COVER, LV_PART_INDICATOR);
+    }
+}
+
 /* ---- デバッグ用プリセット選択画面 ----
  * 通常のnav階層(menu_nav.c)とは無関係な、独立した2つ目の画面/ラベル/ローラー
  * を使う。通常起動では一度も使われないため、ここで初めて(遅延)生成する。 */
@@ -670,17 +706,17 @@ static void ensure_debug_picker_created(void)
 
     s_debug_screen = lv_obj_create(NULL);
     lv_obj_set_style_bg_color(s_debug_screen, lv_color_hex(0x101010), 0);
-    lv_obj_set_style_text_font(s_debug_screen, &font_ja_menu_14, 0);
+    lv_obj_set_style_text_font(s_debug_screen, UI_FONT_JA, 0);
 
     s_debug_title_label = lv_label_create(s_debug_screen);
     lv_obj_set_style_text_color(s_debug_title_label, lv_color_hex(0xffffff), 0);
-    lv_obj_align(s_debug_title_label, LV_ALIGN_TOP_MID, 0, 10);
+    lv_obj_align(s_debug_title_label, LV_ALIGN_TOP_MID, 0, PX(10));
     lv_label_set_text(s_debug_title_label, "デバッグ: プリセット選択");
 
     s_debug_roller = lv_roller_create(s_debug_screen);
     lv_roller_set_visible_row_count(s_debug_roller, 4);
-    lv_obj_set_width(s_debug_roller, 260);
-    lv_obj_align(s_debug_roller, LV_ALIGN_CENTER, 0, 10);
+    lv_obj_set_width(s_debug_roller, PX(260));
+    lv_obj_align(s_debug_roller, LV_ALIGN_CENTER, 0, PX(10));
     lv_obj_clear_flag(s_debug_roller, LV_OBJ_FLAG_CLICKABLE);
 }
 

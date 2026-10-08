@@ -54,6 +54,11 @@ void ui_screens_debug_picker_set_selected(int index);
  * この関数はそれとは独立に見た目だけを隠す/戻すためのものとして働く。 */
 void ui_screens_set_toy_mode(bool active);
 
+/* 【スクリーンショット用(simのPNG保存ボタンが使う)】撮影の直前に呼ぶ。
+ * 調理完了後のフェード点滅の途中で撮っても、薄い状態で保存されないように
+ * 不透明へ戻す(アニメ自体は止めない)。実機側では呼ばれない。 */
+void ui_screens_prepare_capture(void);
+
 #ifdef __cplusplus
 }
 #endif
