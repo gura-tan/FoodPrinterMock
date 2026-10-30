@@ -46,13 +46,13 @@ extern "C" {
  * Encoderは1クリックで±2。Scrollはホイール12パルス/回転で、増分が異なる可能性がある。
  * 値が合っていないと「1ノッチで選択が動かない」「2項目動く」等になる。 */
 #ifndef SCROLL_RAW_TICKS_PER_STEP
-#define SCROLL_RAW_TICKS_PER_STEP    2
+#define SCROLL_RAW_TICKS_PER_STEP    1
 #endif
 
 /* TODO(未検証): 回転方向の符号。+1なら生カウンタが増える向きを「選択を先へ進める」
  * (delta>0)とする。実機で逆だったら-1にする。 */
 #ifndef SCROLL_DIRECTION_SIGN
-#define SCROLL_DIRECTION_SIGN        1
+#define SCROLL_DIRECTION_SIGN        -1
 #endif
 
 /* TODO(未検証): ボタンレジスタが「押されている」ときの値。Encoderは0=押下/1=離。

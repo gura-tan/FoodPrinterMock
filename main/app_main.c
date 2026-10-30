@@ -96,7 +96,7 @@ static const char *const DEBUG_PICKER_RESET_LABEL = "(SDのpreset.txtに戻す)"
 
 
 /* bsp_display_brightness_set()に渡す値(0-100) */
-#define DISPLAY_BRIGHTNESS 50
+#define DISPLAY_BRIGHTNESS 40
 
 /* ---- 入力ごとの状態 ----
  * 1入力=1つ持つ。ボタンのデバウンス/ジッタガード/長押し判定は「その入力の
