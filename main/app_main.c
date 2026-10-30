@@ -94,6 +94,10 @@ static const char *const DEBUG_PICKER_RESET_LABEL = "(SDのpreset.txtに戻す)"
  * ダンプできる(配置が違うときこそ使う)。 */
 #define SCROLL_REGISTER_SCAN_MODE   0
 
+
+/* bsp_display_brightness_set()に渡す値(0-100) */
+#define DISPLAY_BRIGHTNESS 50
+
 /* ---- 入力ごとの状態 ----
  * 1入力=1つ持つ。ボタンのデバウンス/ジッタガード/長押し判定は「その入力の
  * ボタン」に対するものなので、2系統を混ぜると互いの状態を壊す(例: Encoderの
@@ -220,6 +224,7 @@ static void run_debug_preset_picker(void)
 
     bsp_display_start();
     bsp_display_backlight_on();
+    bsp_display_brightness_set(DISPLAY_BRIGHTNESS);
 
     bsp_display_lock(0);
     ui_screens_show_debug_picker(display_names, display_count);
@@ -396,6 +401,7 @@ static void process_input(input_source_t src)
                 bsp_display_backlight_off();
             } else {
                 bsp_display_backlight_on();
+                bsp_display_brightness_set(DISPLAY_BRIGHTNESS);
             }
             sound_hooks_play(UI_SOUND_DONE);
         }
@@ -600,6 +606,7 @@ void app_main(void)
      * 確認してほしい(esp_lvgl_portベースのBSPで一般的な形を想定している)。 */
     bsp_display_start();
     bsp_display_backlight_on();
+    bsp_display_brightness_set(DISPLAY_BRIGHTNESS);
 
     nav_init();
 
