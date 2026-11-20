@@ -143,6 +143,26 @@ typedef struct {
 static esp_codec_dev_handle_t s_spk_dev;
 static QueueHandle_t s_sound_queue;
 
+/* 【READYの保護(事故対策)】
+ * UI_SOUND_READY(調理中画面のカウントダウンが0になった=調理完了の通知)は、
+ * 聞き逃すと事故につながり得るため、他のどの音からも割り込まれないようにする。
+ * 保護は「READYの要求がキューに入った瞬間」から始める(再生が始まってから
+ * 守るだけだと、再生タスクに拾われる前に別の要求がキューを上書きして
+ * READY自体が消えてしまう隙が残るため)。
+ * 保護中はREADY以外の再生要求をsound_hooks_play_from()/
+ * sound_hooks_play_chained()の入口で捨て、キューには入れない(キューに
+ * 残すとREADYの終了後に遅れて鳴ってしまう)。READY自身の要求は保護中でも
+ * 通し、従来通り再生中の他の音を打ち切って鳴り始める。
+ * 解除は再生タスク(sound_task)側が、READYの再生を終えたとき(再生できる
+ * クリップが無くて再生自体を飛ばしたときも含む)に行う。READYのクリップが
+ * 読み込めていない場合は保護を立てない(鳴らない音のために他の音まで
+ * 止めないため。立て始める条件はresolve_slot()がREADYのスロットを
+ * 返したときだけ)。
+ * 書き込みは呼び出し側タスク、解除は再生タスクと分かれるためvolatileに
+ * している。多少のタイミングのずれ(解除直前の要求が1件捨てられる等)は
+ * 安全側に倒れるので許容する。 */
+static volatile bool s_ready_protected;
+
 /* 直前にesp_codec_dev_open()した際のフォーマットをキャッシュしておき、
  * 同じフォーマットのクリップが連続する場合はclose/openし直さない。
  * (これが以前undefinedのまま参照されていて、ビルドが通らない状態だった箇所) */
@@ -472,7 +492,11 @@ static bool ensure_codec_open(const sound_clip_t *clip)
     return true;
 }
 
-static void play_clip_interruptible(const sound_clip_t *clip)
+/* protected_clip=trueのとき(READY再生中)は割り込みを受け付けない。
+ * 保護は入口(sound_hooks_play_from等)でも掛けているので通常はキューに
+ * 要求が残っているはずはないが、タイミングの競合で残っていた場合は
+ * ここで取り出して捨てる(二重の守り)。 */
+static void play_clip_interruptible(const sound_clip_t *clip, bool protected_clip)
 {
     if (!ensure_codec_open(clip)) {
         return;
@@ -490,13 +514,23 @@ static void play_clip_interruptible(const sound_clip_t *clip)
     size_t offset = 0;
     while (offset < clip->pcm_len) {
         sound_request_t pending;
-        /* interrupt=trueの要求が待っているときだけ今の再生を打ち切る。
-         * interrupt=false(chained)の要求は、今の再生が終わってから
-         * sound_task側で自然にxQueueReceive()されるのでここでは無視する
-         * (xQueuePeek()は取り出さずに覗くだけなので、後段の受信に影響しない)。 */
-        if (xQueuePeek(s_sound_queue, &pending, 0) == pdTRUE && pending.interrupt) {
-            ESP_LOGD(TAG, "playback interrupted by a newer sound request");
-            return;
+        /* 通常は、interrupt=trueの要求が待っているときだけ今の再生を
+         * 打ち切る。interrupt=false(chained)の要求は、今の再生が終わって
+         * からsound_task側で自然にxQueueReceive()されるのでここでは
+         * 無視する(xQueuePeek()は取り出さずに覗くだけなので、後段の
+         * 受信に影響しない)。
+         * protected_clip(READY再生中)のときは割り切らず、待っている
+         * 要求があれば種類を問わず取り出して捨てる。 */
+        if (xQueuePeek(s_sound_queue, &pending, 0) == pdTRUE) {
+            if (protected_clip) {
+                sound_request_t discarded;
+                if (xQueueReceive(s_sound_queue, &discarded, 0) == pdTRUE) {
+                    ESP_LOGD(TAG, "discarded a sound request while READY is playing (slot=%d)", discarded.slot);
+                }
+            } else if (pending.interrupt) {
+                ESP_LOGD(TAG, "playback interrupted by a newer sound request");
+                return;
+            }
         }
         size_t remain = clip->pcm_len - offset;
         size_t n = (remain < chunk_bytes) ? remain : chunk_bytes;
@@ -522,10 +556,17 @@ static void sound_task(void *arg)
         int slot = req.slot;
         if (slot < 0 || slot >= SLOT_COUNT || !s_slots[slot].valid || s_spk_dev == NULL) {
             ESP_LOGD(TAG, "sound slot=%d: no clip available", slot);
+            if (slot == UI_SOUND_READY) {
+                /* 再生できなかったREADYで保護を立てっぱなしにしない */
+                s_ready_protected = false;
+            }
             continue;
         }
 
-        play_clip_interruptible(&s_slots[slot].clip);
+        play_clip_interruptible(&s_slots[slot].clip, slot == UI_SOUND_READY);
+        if (slot == UI_SOUND_READY) {
+            s_ready_protected = false; // READYの再生が終わったので保護を解除する
+        }
     }
 }
 
@@ -570,9 +611,20 @@ void sound_hooks_play_from(ui_sound_id_t id, input_source_t src)
     if (s_sound_queue == NULL) {
         return;
     }
+    /* READYの保護中は、READY以外の要求をキューに入れずに捨てる
+     * (s_ready_protectedのコメント参照)。 */
+    if (s_ready_protected && id != UI_SOUND_READY) {
+        ESP_LOGD(TAG, "sound id=%d dropped: READY is protected", (int)id);
+        return;
+    }
     /* フォールバックはここ(呼び出し側のタスク)で解決する。s_slots[].validは
      * 起動時のロード後は変化しないので、他タスクから読んでも競合しない。 */
     sound_request_t req = { .slot = resolve_slot(id, src), .interrupt = true };
+    if (id == UI_SOUND_READY && req.slot == UI_SOUND_READY) {
+        /* READYのクリップが実際に鳴らせる場合だけ、キューに入れる前に
+         * 保護を立てる(キュー待ちの間も上書きされないようにするため) */
+        s_ready_protected = true;
+    }
     xQueueOverwrite(s_sound_queue, &req);
 }
 
@@ -586,6 +638,14 @@ void sound_hooks_play_chained(ui_sound_id_t id)
     if (s_sound_queue == NULL) {
         return;
     }
+    /* 即時割り込み版と同じく、READYの保護中はREADY以外を捨てる */
+    if (s_ready_protected && id != UI_SOUND_READY) {
+        ESP_LOGD(TAG, "sound id=%d dropped: READY is protected", (int)id);
+        return;
+    }
     sound_request_t req = { .slot = resolve_slot(id, INPUT_SRC_ENCODER), .interrupt = false };
+    if (id == UI_SOUND_READY && req.slot == UI_SOUND_READY) {
+        s_ready_protected = true;
+    }
     xQueueOverwrite(s_sound_queue, &req);
 }

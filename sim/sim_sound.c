@@ -19,6 +19,12 @@
  *   MOVE_PARAM (moveprm系): 上記のcat→prmに読み替えたもの
  * フォールバックの解決はJS側(resolveClipName)で行い、実際に鳴らす
  * クリップ名をplayNow()に渡す。
+ *
+ * 【READYの保護(事故対策)】実機のsound_hooks.cと同じく、readyは
+ * 再生中(と、play_chained()で再生待ちの間)は他のどの音からも
+ * 割り込まれず、その間に来た他の音の要求は捨てられる
+ * (__simSoundPlay側の判定。実機側の詳細はmain/sound_hooks.cの
+ * s_ready_protectedのコメント参照)。
  */
 #include "sound_hooks.h"
 
@@ -40,6 +46,7 @@ EM_JS(void, sim_sound_js_init, (), {
         ctx: null,
         buffers: {},    // クリップ名(下記allNames参照) -> AudioBuffer
         current: null,  // 再生中のAudioBufferSourceNode(即時割り込み版のみ管理)
+        currentName: null, // 再生中のクリップ名(READY保護の判定用。currentと対で更新する)
         pending: null,  // play_chained()で予約された次のクリップ名
         // 入力によらず共通の音
         commonNames: ["hit", "proceed", "back", "deny", "ready", "done"],
@@ -91,6 +98,7 @@ EM_JS(void, sim_sound_js_init, (), {
         src.onended = function() {
             if (state.current !== src) return;
             state.current = null;
+            state.currentName = null;
             if (state.pending) {
                 var next = state.pending;
                 state.pending = null;
@@ -99,16 +107,24 @@ EM_JS(void, sim_sound_js_init, (), {
         };
         src.start();
         state.current = src;
+        state.currentName = name;
     }
 
     // id/srcはC側のui_sound_id_t/input_source_tを文字列化したもの(下記sim_sound_js_play参照)。
     window.__simSoundPlay = function(id, srcName, chained) {
+        // 【READYの保護】readyの再生中、およびchainedでreadyが再生待ちの
+        // 間は、ready以外の要求を捨てる(今の再生を止めず、pendingも
+        // 上書きしない)。実機sound_hooks.cのs_ready_protectedと同じ挙動。
+        if (id !== "ready" && (state.currentName === "ready" || state.pending === "ready")) {
+            return;
+        }
         var name = resolveClipName(id, srcName);
         if (!name) {
             // 鳴らせるクリップが無くても、割り込み再生なら実機と同じく今の再生は打ち切る
             if (!chained && state.current) {
                 try { state.current.stop(); } catch (e) { /* 再生完了直後などは無視 */ }
                 state.current = null;
+                state.currentName = null;
             }
             return;
         }

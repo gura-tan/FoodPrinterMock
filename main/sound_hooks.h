@@ -21,6 +21,14 @@ extern "C" {
  * (input_source_t)によって別のwavを鳴らせる(sound_hooks_play_from())。
  * 他のIDは入力によらず共通の音。フォールバックの順序は
  * sound_hooks_play_from()のコメント参照。
+ *
+ * 【READYの保護(事故対策)】
+ * UI_SOUND_READY(調理完了の通知)は、要求がキューに入ってから再生が
+ * 終わるまで、他のどの音からも割り込まれない。その間に来た他の音の
+ * 要求は、鳴らさずに捨てられる(遅れて鳴ることもない)。READY自身は
+ * 従来通り、再生中の他の音を打ち切って鳴り始める。READYのクリップが
+ * 読み込めていない場合は保護は掛からない。詳細はsound_hooks.cの
+ * s_ready_protectedのコメント参照。
  */
 
 /* 【重要】この並びと値を変えないこと(sim/sim_sound.cのJS側idNamesと連動している)。
