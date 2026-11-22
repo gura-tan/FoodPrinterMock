@@ -57,6 +57,10 @@ static esp_err_t read_counter_raw(int32_t *out_raw)
 
 esp_err_t encoder_init(void)
 {
+    if (s_initialized) {
+        return ESP_OK; // 初期化済みなら何もしない(再試行側から誤って呼ばれた場合の保険)
+    }
+
     i2c_master_bus_config_t bus_cfg = {
         /* 【2026/09 変更】以前は-1(空いているポートを自動選択)だったが、
          * ハードI2Cを I2C_NUM_0 に固定した。ESP32-S3のハードI2Cは2つ
@@ -86,6 +90,11 @@ esp_err_t encoder_init(void)
     err = i2c_master_bus_add_device(s_bus, &dev_cfg, &s_dev);
     if (err != ESP_OK) {
         ESP_LOGE(TAG, "i2c_master_bus_add_device failed: %s", esp_err_to_name(err));
+        /* 後始末しないとバス(I2C_NUM_0)が残り、再試行のencoder_init()が
+         * i2c_new_master_bus()でESP_ERR_INVALID_STATEになってしまう
+         * (ランタイム再試行の前提。input_hub_retry_unavailable()参照) */
+        i2c_del_master_bus(s_bus);
+        s_bus = NULL;
         return err;
     }
 
@@ -110,6 +119,14 @@ esp_err_t encoder_init(void)
         ESP_LOGE(TAG, "initial counter read failed after %d attempts: %s "
                       "(未接続、または電源レールがまだ安定していない可能性。PWRボタンでの電源再投入も試してほしい)",
                  ENCODER_INIT_RETRY_COUNT, esp_err_to_name(err));
+        /* デバイスとバスを解放してから返す。再試行時にencoder_init()を
+         * もう一度呼べるようにするため(上記のadd_device失敗時と同じ理由)。
+         * コールドブート時はGrove電源がまだ来ておらずここに来るのが常態で、
+         * 電源が来た後の再試行で成功する想定。 */
+        i2c_master_bus_rm_device(s_dev);
+        s_dev = NULL;
+        i2c_del_master_bus(s_bus);
+        s_bus = NULL;
         return err;
     }
     s_last_counter = raw;

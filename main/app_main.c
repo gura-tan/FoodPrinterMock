@@ -615,6 +615,12 @@ void app_main(void)
     bsp_display_unlock();
 
     while (1) {
+        /* コールドブート時、Grove電源が来る前に入力初期化が失敗していた
+         * 場合の復旧(input_hub側で間隔を空けて再試行する)。
+         * 起動時のボタン長押し検出には影響しない(あちらはこのループより
+         * 前に終わっている)。 */
+        input_hub_retry_unavailable();
+
         if (!ui_screens_transition_in_progress() && nav_get_state()->level == NAV_LEVEL_COOKING) {
             /* 調理中画面のカウントダウンは実時間で進むため、ダイヤル/ボタン
              * 入力の有無に関わらず毎ループ更新する。0に達した瞬間だけ

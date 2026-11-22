@@ -32,6 +32,13 @@ esp_err_t input_hub_init(void);
 /* 初期化に成功して使える入力かどうか。 */
 bool input_hub_is_available(input_source_t src);
 
+/* 初期化に失敗した入力のinit()を再試行する。メインループから毎周期呼ぶ前提で、
+ * 実際の再試行は間隔を空けて行う(詳細はinput_hub.cのコメント参照)。
+ * コールドブート時、Grove電源がまだ供給されていないタイミングで初期化に
+ * 失敗した入力を、電源が来た後に自動で復旧させるためのもの。復旧したときは
+ * その旨をログに出す。使える入力しか無い場合は何もしない。 */
+void input_hub_retry_unavailable(void);
+
 /* 1入力を1回ポーリングする。out_delta(1ノッチ=1ステップに正規化済み)・
  * out_button_pressedはどちらもNULL可。
  * 初期化していない入力にはESP_ERR_INVALID_STATEを返す(ログなし)。 */
