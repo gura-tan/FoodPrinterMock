@@ -25,6 +25,7 @@ idf_component_register(
         nvs_flash          # デバッグ用プリセット選択の保存(debug_preset.c)
         esp_driver_gpio    # soft_i2c.c: gpio_config/gpio_set_level/gpio_get_level (Unit Scroll用ソフトI2C)
         esp_rom            # soft_i2c.c: esp_rom_delay_us (busy-waitによるI2Cタイミング生成)
+        esp_timer          # input_hub.c: esp_timer_get_time (初期化失敗した入力の再試行間隔の管理)
 )
 
 # 【変更点】UI音声はSDカード(/sdcard/sounds/...)から読み込む方式に変更したため、
